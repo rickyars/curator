@@ -501,6 +501,66 @@ document.getElementById('results-toggle-btn').addEventListener('click', () => {
 document.getElementById('export-btn').addEventListener('click', exportCSV);
 
 // --- INIT ---
+async function init() {
+  showLoadingStatus('Connecting…');
+
+  // 1. Fetch images.json
+  let filenames;
+  try {
+    const res = await fetch('images.json');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    filenames = await res.json();
+  } catch (e) {
+    showLoadingStatus(`Error: could not load images.json (${e.message})`);
+    return;
+  }
+
+  if (filenames.length < 2) {
+    showLoadingStatus('Error: add at least 2 images to the images/ folder and re-run generate-manifest.js');
+    return;
+  }
+
+  // 2. Read current Firebase scores
+  let firebaseImages = {};
+  try {
+    const snap = await get(ref(db, 'images'));
+    firebaseImages = snap.val() || {};
+  } catch (e) {
+    showLoadingStatus(`Error: could not connect to Firebase (${e.message}). Check FIREBASE_CONFIG.`);
+    return;
+  }
+
+  // 3. Build localScores — start from Firebase, add missing entries
+  localScores = { ...firebaseImages };
+  const missing = {};
+  for (const name of filenames) {
+    if (!localScores[name]) {
+      const entry = { score: 1000, wins: 0, losses: 0, games: 0 };
+      localScores[name] = entry;
+      missing[name] = entry;
+    }
+  }
+  if (Object.keys(missing).length > 0) {
+    await update(ref(db, 'images'), missing);
+  }
+
+  // 4. Seed totalComparisons from Firebase
+  const totalSnap = await get(ref(db, 'totalComparisons'));
+  totalComparisons = totalSnap.val() || 0;
+
+  // 5. Keep totalComparisons in sync (always-on listener)
+  onValue(ref(db, 'totalComparisons'), snap => {
+    totalComparisons = snap.val() || 0;
+    if (document.getElementById('rating-view').style.display !== 'none') {
+      updateStats();
+    }
+  });
+
+  // 6. Begin rating
+  startRating();
+}
+
+init();
 </script>
 </body>
 </html>
