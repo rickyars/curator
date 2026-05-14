@@ -275,6 +275,8 @@ let sessionComparisons = 0;
 let lastPair           = null;
 let totalComparisons   = 0;    // kept in sync by onValue listener
 let resultsUnsubscribe = null; // detaches onValue when results view closes
+let picking = false;           // prevents double-votes during Firebase round-trip
+let manifestSet = new Set();   // set of valid filenames from images.json
 
 // --- ELO ---
 function expectedScore(scoreA, scoreB) {
@@ -364,7 +366,9 @@ function showResultsView() {
   resultsUnsubscribe = onValue(ref(db, 'images'), snap => {
     const data = snap.val();
     if (data) {
-      Object.assign(localScores, data);
+      for (const key of manifestSet) {
+        if (data[key]) localScores[key] = data[key];
+      }
       renderResultsGrid();
     }
   });
@@ -452,11 +456,19 @@ async function applyResultFirebase(winnerName, loserName) {
 }
 
 async function onPick(winnerName, loserName) {
-  await applyResultFirebase(winnerName, loserName);
-  sessionComparisons++;
-  const pair = selectNextPair(localScores, lastPair);
-  lastPair = pair;
-  showRatingView(pair[0], pair[1]);
+  if (picking) return;
+  picking = true;
+  try {
+    await applyResultFirebase(winnerName, loserName);
+    sessionComparisons++;
+    const pair = selectNextPair(localScores, lastPair);
+    lastPair = pair;
+    showRatingView(pair[0], pair[1]);
+  } catch (e) {
+    showLoadingStatus(`Error saving vote: ${e.message}. Reload to reconnect.`);
+  } finally {
+    picking = false;
+  }
 }
 
 function startRating() {
@@ -530,6 +542,8 @@ async function init() {
     return;
   }
 
+  manifestSet = new Set(filenames);
+
   // 3. Build localScores — start from Firebase, add missing entries
   localScores = { ...firebaseImages };
   const missing = {};
@@ -541,11 +555,22 @@ async function init() {
     }
   }
   if (Object.keys(missing).length > 0) {
-    await update(ref(db, 'images'), missing);
+    try {
+      await update(ref(db, 'images'), missing);
+    } catch (e) {
+      showLoadingStatus(`Error initializing scores: ${e.message}. Check FIREBASE_CONFIG.`);
+      return;
+    }
   }
 
   // 4. Seed totalComparisons from Firebase
-  const totalSnap = await get(ref(db, 'totalComparisons'));
+  let totalSnap;
+  try {
+    totalSnap = await get(ref(db, 'totalComparisons'));
+  } catch (e) {
+    showLoadingStatus(`Error reading totalComparisons: ${e.message}. Check FIREBASE_CONFIG.`);
+    return;
+  }
   totalComparisons = totalSnap.val() || 0;
 
   // 5. Keep totalComparisons in sync (always-on listener)
