@@ -594,6 +594,68 @@ document.getElementById('storage-warning').addEventListener('click', () => {
   document.getElementById('storage-warning').style.display = 'none';
 });
 
+function onPick(winnerName, loserName) {
+  applyResult(winnerName, loserName, appData);
+  sessionComparisons++;
+  saveData(appData);
+  const loadedImages = Object.fromEntries(
+    Object.entries(appData.images).filter(([, v]) => v.url)
+  );
+  const pair = selectNextPair(loadedImages, lastPair);
+  lastPair = pair;
+  showRatingView(pair[0], pair[1]);
+}
+
+document.getElementById('panel-a').addEventListener('click', () => {
+  const a = document.getElementById('panel-a').dataset.name;
+  const b = document.getElementById('panel-b').dataset.name;
+  if (a && b) onPick(a, b);
+});
+
+document.getElementById('panel-b').addEventListener('click', () => {
+  const a = document.getElementById('panel-a').dataset.name;
+  const b = document.getElementById('panel-b').dataset.name;
+  if (a && b) onPick(b, a);
+});
+
+document.addEventListener('keydown', e => {
+  if (document.getElementById('rating-view').style.display === 'none') return;
+  const a = document.getElementById('panel-a').dataset.name;
+  const b = document.getElementById('panel-b').dataset.name;
+  if (!a || !b) return;
+  if (e.key === 'ArrowLeft')  onPick(a, b);
+  if (e.key === 'ArrowRight') onPick(b, a);
+});
+
+document.getElementById('results-toggle-btn').addEventListener('click', () => {
+  if (document.getElementById('results-view').style.display === 'none') {
+    showResultsView();
+  } else {
+    showRatingView(
+      document.getElementById('panel-a').dataset.name,
+      document.getElementById('panel-b').dataset.name
+    );
+  }
+});
+
+function exportCSV() {
+  const rows = Object.entries(appData.images)
+    .sort((a, b) => b[1].score - a[1].score)
+    .map(([name, img]) =>
+      [name, img.score.toFixed(2), img.wins, img.losses, img.games].join(',')
+    );
+  const csv = ['filename,score,wins,losses,games', ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'elo-rankings.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+document.getElementById('export-btn').addEventListener('click', exportCSV);
+
 // --- INIT ---
 let appData = loadData();
 let sessionComparisons = 0;
