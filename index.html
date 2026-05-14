@@ -416,6 +416,89 @@ function exportCSV() {
 }
 
 // --- EVENTS ---
+async function applyResultFirebase(winnerName, loserName) {
+  const winRef  = ref(db, `images/${winnerName}`);
+  const loseRef = ref(db, `images/${loserName}`);
+
+  const [winResult, loseResult] = await Promise.all([
+    runTransaction(winRef, current => {
+      if (current === null) return current;
+      const kWinner = current.games < K_THRESHOLD ? K_HIGH : K_LOW;
+      const exp = expectedScore(current.score, localScores[loserName].score);
+      return {
+        score:   current.score + kWinner * (1 - exp),
+        wins:    current.wins + 1,
+        losses:  current.losses,
+        games:   current.games + 1,
+      };
+    }),
+    runTransaction(loseRef, current => {
+      if (current === null) return current;
+      const kLoser = current.games < K_THRESHOLD ? K_HIGH : K_LOW;
+      const exp = expectedScore(localScores[winnerName].score, current.score);
+      return {
+        score:   current.score - kLoser * (1 - exp),
+        wins:    current.wins,
+        losses:  current.losses + 1,
+        games:   current.games + 1,
+      };
+    }),
+  ]);
+
+  if (winResult.committed)  localScores[winnerName] = winResult.snapshot.val();
+  if (loseResult.committed) localScores[loserName]  = loseResult.snapshot.val();
+
+  runTransaction(ref(db, 'totalComparisons'), n => (n || 0) + 1);
+}
+
+async function onPick(winnerName, loserName) {
+  await applyResultFirebase(winnerName, loserName);
+  sessionComparisons++;
+  const pair = selectNextPair(localScores, lastPair);
+  lastPair = pair;
+  showRatingView(pair[0], pair[1]);
+}
+
+function startRating() {
+  const pair = selectNextPair(localScores, lastPair);
+  lastPair = pair;
+  showRatingView(pair[0], pair[1]);
+}
+
+document.getElementById('panel-a').addEventListener('click', () => {
+  const a = document.getElementById('panel-a').dataset.name;
+  const b = document.getElementById('panel-b').dataset.name;
+  if (a && b) onPick(a, b);
+});
+
+document.getElementById('panel-b').addEventListener('click', () => {
+  const a = document.getElementById('panel-a').dataset.name;
+  const b = document.getElementById('panel-b').dataset.name;
+  if (a && b) onPick(b, a);
+});
+
+document.addEventListener('keydown', e => {
+  if (document.getElementById('rating-view').style.display === 'none') return;
+  const a = document.getElementById('panel-a').dataset.name;
+  const b = document.getElementById('panel-b').dataset.name;
+  if (!a || !b) return;
+  if (e.key === 'ArrowLeft')  onPick(a, b);
+  if (e.key === 'ArrowRight') onPick(b, a);
+});
+
+document.getElementById('results-toggle-btn').addEventListener('click', () => {
+  if (document.getElementById('results-view').style.display === 'none') {
+    showResultsView();
+  } else {
+    if (resultsUnsubscribe) { resultsUnsubscribe(); resultsUnsubscribe = null; }
+    showRatingView(
+      document.getElementById('panel-a').dataset.name,
+      document.getElementById('panel-b').dataset.name
+    );
+  }
+});
+
+document.getElementById('export-btn').addEventListener('click', exportCSV);
 
 // --- INIT ---
 </script>
