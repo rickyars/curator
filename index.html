@@ -382,7 +382,7 @@ function relativeDate(ts) {
 }
 
 function lowGameCount(images) {
-  return Object.values(images).filter(img => img.url && img.games < PROGRESS_THRESHOLD).length;
+  return Object.values(images).filter(img => img.games < PROGRESS_THRESHOLD).length;
 }
 
 function showLoadingView(data) {
@@ -474,7 +474,8 @@ function showResultsView() {
 }
 
 function updateStats() {
-  const low = lowGameCount(appData.images);
+  const loadedImages = Object.fromEntries(Object.entries(appData.images).filter(([, v]) => v.url));
+  const low = lowGameCount(loadedImages);
   document.getElementById('stats-session').textContent =
     `${sessionComparisons} comparison${sessionComparisons === 1 ? '' : 's'} this session · ${appData.totalComparisons} total`;
   document.getElementById('stats-progress').textContent =
