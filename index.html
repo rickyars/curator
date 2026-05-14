@@ -307,10 +307,11 @@ function expectedScore(scoreA, scoreB) {
 function applyResult(winnerName, loserName, data) {
   const winner = data.images[winnerName];
   const loser  = data.images[loserName];
-  const k   = winner.games < K_THRESHOLD ? K_HIGH : K_LOW;
+  const kWinner = winner.games < K_THRESHOLD ? K_HIGH : K_LOW;
+  const kLoser  = loser.games  < K_THRESHOLD ? K_HIGH : K_LOW;
   const exp = expectedScore(winner.score, loser.score);
-  winner.score += k * (1 - exp);
-  loser.score  -= k * (1 - exp);
+  winner.score += kWinner * (1 - exp);
+  loser.score  -= kLoser  * (1 - exp);
   winner.wins++;
   winner.games++;
   loser.losses++;
@@ -381,7 +382,7 @@ function relativeDate(ts) {
 }
 
 function lowGameCount(images) {
-  return Object.values(images).filter(img => img.games < PROGRESS_THRESHOLD).length;
+  return Object.values(images).filter(img => img.url && img.games < PROGRESS_THRESHOLD).length;
 }
 
 function showLoadingView(data) {
@@ -418,7 +419,7 @@ function showLoadingView(data) {
           ${progressText}
         </div>
         <div class="resume-btns">
-          <button class="btn btn-primary" id="continue-btn">Continue ranking</button>
+          <button class="btn btn-primary" id="continue-btn">Load folder to continue</button>
           <button class="btn" id="new-folder-btn">New folder</button>
         </div>
         <div class="loading-error" id="loading-error"></div>
@@ -537,7 +538,6 @@ async function onFolderLoaded(files) {
     img.onload = () => { appData.images[file.name].url = url; resolve(); };
     img.onerror = () => {
       console.warn('Skipping corrupt image:', file.name);
-      delete appData.images[file.name];
       URL.revokeObjectURL(url);
       resolve();
     };
@@ -640,6 +640,7 @@ document.getElementById('results-toggle-btn').addEventListener('click', () => {
 
 function exportCSV() {
   const rows = Object.entries(appData.images)
+    .filter(([, img]) => img.games > 0 || img.url)
     .sort((a, b) => b[1].score - a[1].score)
     .map(([name, img]) =>
       [name, img.score.toFixed(2), img.wins, img.losses, img.games].join(',')
