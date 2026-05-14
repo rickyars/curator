@@ -300,6 +300,23 @@ function mergeFolder(data, filenames) {
 }
 
 // --- ELO ---
+function expectedScore(scoreA, scoreB) {
+  return 1 / (1 + Math.pow(10, (scoreB - scoreA) / 400));
+}
+
+function applyResult(winnerName, loserName, data) {
+  const winner = data.images[winnerName];
+  const loser  = data.images[loserName];
+  const k   = winner.games < K_THRESHOLD ? K_HIGH : K_LOW;
+  const exp = expectedScore(winner.score, loser.score);
+  winner.score += k * (1 - exp);
+  loser.score  -= k * (1 - exp);
+  winner.wins++;
+  winner.games++;
+  loser.losses++;
+  loser.games++;
+  data.totalComparisons++;
+}
 
 // --- PAIRING ---
 
