@@ -319,6 +319,57 @@ function applyResult(winnerName, loserName, data) {
 }
 
 // --- PAIRING ---
+function weightedRandom(items) {
+  const total = items.reduce((sum, x) => sum + x.weight, 0);
+  let r = Math.random() * total;
+  for (const item of items) {
+    r -= item.weight;
+    if (r <= 0) return item.name;
+  }
+  return items[items.length - 1].name;
+}
+
+function selectNextPair(images, lastPair) {
+  const names = Object.keys(images);
+
+  // Player A: weighted by 1/(games+1) — zero-game images have highest priority
+  const weights = names.map(n => ({ name: n, weight: 1 / (images[n].games + 1) }));
+  let playerA = weightedRandom(weights);
+
+  // Player B: closest Elo among low-game candidates; fall back to all if none qualify
+  const pickB = (excludeA) => {
+    const others = names.filter(n => n !== excludeA);
+    let pool = others.filter(n => images[n].games < LOW_GAME_CAP);
+    if (pool.length === 0) pool = others;
+    pool.sort((a, b) =>
+      Math.abs(images[a].score - images[excludeA].score) -
+      Math.abs(images[b].score - images[excludeA].score)
+    );
+    return pool;
+  };
+
+  let bCandidates = pickB(playerA);
+  let playerB = bCandidates[0];
+
+  // Avoid repeating the exact same pair back-to-back (only when >2 images)
+  if (lastPair && names.length > 2) {
+    const [la, lb] = lastPair;
+    const isRepeat = (playerA === la && playerB === lb) ||
+                     (playerA === lb && playerB === la);
+    if (isRepeat) {
+      if (bCandidates.length > 1) {
+        playerB = bCandidates[1];
+      } else {
+        // Re-pick A from remaining candidates and recompute B
+        const altWeights = weights.filter(w => w.name !== playerA);
+        playerA = weightedRandom(altWeights);
+        playerB = pickB(playerA)[0];
+      }
+    }
+  }
+
+  return [playerA, playerB];
+}
 
 // --- UI ---
 
