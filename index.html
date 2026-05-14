@@ -482,9 +482,117 @@ function updateStats() {
       : 'Refining rankings';
 }
 
-function wireLoadingEvents() { /* implemented in EVENTS section */ }
+function wireLoadingEvents() {
+  const input = document.getElementById('folder-input');
+
+  const chooseBtn = document.getElementById('choose-btn');
+  if (chooseBtn) chooseBtn.onclick = () => { pendingNewFolder = false; input.click(); };
+
+  const continueBtn = document.getElementById('continue-btn');
+  if (continueBtn) continueBtn.onclick = () => { pendingNewFolder = false; input.click(); };
+
+  const newFolderBtn = document.getElementById('new-folder-btn');
+  if (newFolderBtn) newFolderBtn.onclick = () => { pendingNewFolder = true; input.click(); };
+
+  const dropZone = document.getElementById('drop-zone');
+  if (dropZone) {
+    dropZone.ondragover = e => { e.preventDefault(); dropZone.classList.add('drag-over'); };
+    dropZone.ondragleave = () => dropZone.classList.remove('drag-over');
+    dropZone.ondrop = e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      const item = e.dataTransfer.items && e.dataTransfer.items[0];
+      if (item) {
+        const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
+        if (entry && entry.isDirectory) {
+          collectFilesFromEntry(entry).then(files => onFolderLoaded(files));
+          return;
+        }
+      }
+      onFolderLoaded(e.dataTransfer.files);
+    };
+  }
+}
 
 // --- EVENTS ---
+let pendingNewFolder = false;
+
+function isAcceptedFile(file) {
+  return ACCEPTED_EXTS.has(file.name.split('.').pop().toLowerCase());
+}
+
+async function onFolderLoaded(files) {
+  const accepted = Array.from(files).filter(isAcceptedFile);
+
+  if (accepted.length < 2) {
+    showLoadingError('Select a folder with at least 2 supported images (jpg, jpeg, png, gif, webp).');
+    return;
+  }
+
+  mergeFolder(appData, accepted.map(f => f.name));
+
+  await Promise.all(accepted.map(file => new Promise(resolve => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { appData.images[file.name].url = url; resolve(); };
+    img.onerror = () => {
+      console.warn('Skipping corrupt image:', file.name);
+      delete appData.images[file.name];
+      URL.revokeObjectURL(url);
+      resolve();
+    };
+    img.src = url;
+  })));
+
+  const loadedNames = Object.keys(appData.images).filter(n => appData.images[n].url);
+  if (loadedNames.length < 2) {
+    showLoadingError('Fewer than 2 images loaded successfully. Try a different folder.');
+    return;
+  }
+
+  saveData(appData);
+  startRating();
+}
+
+function startRating() {
+  const loadedImages = Object.fromEntries(
+    Object.entries(appData.images).filter(([, v]) => v.url)
+  );
+  const pair = selectNextPair(loadedImages, lastPair);
+  lastPair = pair;
+  showRatingView(pair[0], pair[1]);
+}
+
+function collectFilesFromEntry(dirEntry) {
+  return new Promise(resolve => {
+    const files = [];
+    const reader = dirEntry.createReader();
+    (function read() {
+      reader.readEntries(entries => {
+        if (!entries.length) { resolve(files); return; }
+        Promise.all(entries.map(e =>
+          e.isFile
+            ? new Promise(res => e.file(f => { files.push(f); res(); }))
+            : collectFilesFromEntry(e).then(sub => files.push(...sub))
+        )).then(read);
+      });
+    })();
+  });
+}
+
+document.getElementById('folder-input').addEventListener('change', e => {
+  if (!e.target.files.length) return;
+  if (pendingNewFolder) {
+    const ok = confirm('Load new folder? Existing scores for matching filenames will be kept.');
+    if (!ok) { e.target.value = ''; return; }
+  }
+  onFolderLoaded(e.target.files);
+  e.target.value = '';
+});
+
+document.getElementById('storage-warning').addEventListener('click', () => {
+  document.getElementById('storage-warning').style.display = 'none';
+});
 
 // --- INIT ---
 let appData = loadData();
