@@ -250,8 +250,54 @@ html, body {
 
 <script>
 // --- CONFIG ---
+const STORAGE_KEY = 'elo-rater-data';
+const K_HIGH = 32;
+const K_LOW = 16;
+const K_THRESHOLD = 10;
+const LOW_GAME_CAP = 15;
+const PROGRESS_THRESHOLD = 5;
+const ACCEPTED_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']);
 
 // --- STORAGE ---
+function emptyData() {
+  return { images: {}, totalComparisons: 0, lastSession: null };
+}
+
+function loadData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return emptyData();
+    const parsed = JSON.parse(raw);
+    return {
+      images: parsed.images || {},
+      totalComparisons: parsed.totalComparisons || 0,
+      lastSession: parsed.lastSession || null,
+    };
+  } catch {
+    return emptyData();
+  }
+}
+
+function saveData(data) {
+  const payload = {
+    images: data.images,
+    totalComparisons: data.totalComparisons,
+    lastSession: Date.now(),
+  };
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    document.getElementById('storage-warning').style.display = 'block';
+  }
+}
+
+function mergeFolder(data, filenames) {
+  for (const name of filenames) {
+    if (!data.images[name]) {
+      data.images[name] = { score: 1000, wins: 0, losses: 0, games: 0 };
+    }
+  }
+}
 
 // --- ELO ---
 
