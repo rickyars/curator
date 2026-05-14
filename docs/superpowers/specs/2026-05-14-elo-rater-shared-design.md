@@ -8,7 +8,7 @@
 
 ## Overview
 
-A shared version of the Image Elo Rater hosted on GitHub Pages. Images are committed to the repo and served as static files. Scores are stored in Firebase Realtime Database — all users rate the same images and their votes feed a single shared Elo pool. No server, no build step, no folder picker.
+A shared version of the Image Elo Rater hosted on any static host (GitHub Pages, Vercel, or similar). Images are committed to the repo and served as static files. Scores are stored in Firebase Realtime Database — all users rate the same images and their votes feed a single shared Elo pool. No server, no build step, no folder picker.
 
 ---
 
@@ -19,7 +19,7 @@ A shared version of the Image Elo Rater hosted on GitHub Pages. Images are commi
 | Score model | Shared pool — all votes combine into one global ranking |
 | User identity | Anonymous — no login, no names |
 | Backend | Firebase Realtime Database (free Spark tier) |
-| Frontend hosting | GitHub Pages |
+| Frontend hosting | Static hosting — GitHub Pages or Vercel (no difference to the app) |
 | Image manifest | Manual — `node generate-manifest.js`, then commit |
 
 ---
