@@ -215,7 +215,9 @@ html, body {
 <body>
 
 <!-- Loading view -->
-<div id="loading-view"></div>
+<div id="loading-view">
+  <div style="text-align:center;color:#555;font-size:14px;">Connecting…</div>
+</div>
 
 <!-- Rating view -->
 <div id="rating-view">
@@ -242,81 +244,41 @@ html, body {
   <button class="btn" id="export-btn">Export CSV</button>
 </div>
 
-<!-- Storage warning -->
-<div id="storage-warning">⚠ Could not save scores (storage full). Click to dismiss.</div>
 
-<!-- Hidden file input (no accept — webkitdirectory ignores it) -->
-<input type="file" id="folder-input" webkitdirectory multiple style="display:none">
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getDatabase, ref, get, update, runTransaction, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-<script>
 // --- CONFIG ---
-const STORAGE_KEY = 'elo-rater-data';
+// REPLACE these placeholder values with your Firebase project config
+// from console.firebase.google.com → Project settings → Your apps → SDK setup
+const FIREBASE_CONFIG = {
+  apiKey:            "REPLACE_ME",
+  authDomain:        "REPLACE_ME.firebaseapp.com",
+  databaseURL:       "https://REPLACE_ME-default-rtdb.firebaseio.com",
+  projectId:         "REPLACE_ME",
+  storageBucket:     "REPLACE_ME.appspot.com",
+  messagingSenderId: "REPLACE_ME",
+  appId:             "REPLACE_ME"
+};
 const K_HIGH = 32;
-const K_LOW = 16;
+const K_LOW  = 16;
 const K_THRESHOLD = 10;
 const LOW_GAME_CAP = 15;
 const PROGRESS_THRESHOLD = 5;
-const ACCEPTED_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']);
 
-// --- STORAGE ---
-function emptyData() {
-  return { images: {}, totalComparisons: 0, lastSession: null };
-}
-
-function loadData() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return emptyData();
-    const parsed = JSON.parse(raw);
-    return {
-      images: parsed.images || {},
-      totalComparisons: parsed.totalComparisons || 0,
-      lastSession: parsed.lastSession || null,
-    };
-  } catch {
-    return emptyData();
-  }
-}
-
-function saveData(data) {
-  const payload = {
-    images: data.images,
-    totalComparisons: data.totalComparisons,
-    lastSession: Date.now(),
-  };
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    document.getElementById('storage-warning').style.display = 'block';
-  }
-}
-
-function mergeFolder(data, filenames) {
-  for (const name of filenames) {
-    if (!data.images[name]) {
-      data.images[name] = { score: 1000, wins: 0, losses: 0, games: 0 };
-    }
-  }
-}
+// --- GLOBALS ---
+const app = initializeApp(FIREBASE_CONFIG);
+const db  = getDatabase(app);
+let localScores        = {};   // in-memory cache of Firebase images data
+let sessionComparisons = 0;
+let lastPair           = null;
+let totalComparisons   = 0;    // kept in sync by onValue listener
+let resultsUnsubscribe = null; // detaches onValue when results view closes
 
 // --- ELO ---
 function expectedScore(scoreA, scoreB) {
   return 1 / (1 + Math.pow(10, (scoreB - scoreA) / 400));
-}
-
-function applyResult(winnerName, loserName, data) {
-  const winner = data.images[winnerName];
-  const loser  = data.images[loserName];
-  const kWinner = winner.games < K_THRESHOLD ? K_HIGH : K_LOW;
-  const kLoser  = loser.games  < K_THRESHOLD ? K_HIGH : K_LOW;
-  const exp = expectedScore(winner.score, loser.score);
-  winner.score += kWinner * (1 - exp);
-  loser.score  -= kLoser  * (1 - exp);
-  winner.wins++;
-  winner.games++;
-  loser.losses++;
-  loser.games++;
-  data.totalComparisons++;
 }
 
 // --- PAIRING ---
@@ -332,12 +294,9 @@ function weightedRandom(items) {
 
 function selectNextPair(images, lastPair) {
   const names = Object.keys(images);
-
-  // Player A: weighted by 1/(games+1) — zero-game images have highest priority
   const weights = names.map(n => ({ name: n, weight: 1 / (images[n].games + 1) }));
   let playerA = weightedRandom(weights);
 
-  // Player B: closest Elo among low-game candidates; fall back to all if none qualify
   const pickB = (excludeA) => {
     const others = names.filter(n => n !== excludeA);
     let pool = others.filter(n => images[n].games < LOW_GAME_CAP);
@@ -352,7 +311,6 @@ function selectNextPair(images, lastPair) {
   let bCandidates = pickB(playerA);
   let playerB = bCandidates[0];
 
-  // Avoid repeating the exact same pair back-to-back (only when >2 images)
   if (lastPair && names.length > 2) {
     const [la, lb] = lastPair;
     const isRepeat = (playerA === la && playerB === lb) ||
@@ -361,308 +319,20 @@ function selectNextPair(images, lastPair) {
       if (bCandidates.length > 1) {
         playerB = bCandidates[1];
       } else {
-        // Re-pick A from remaining candidates and recompute B
         const altWeights = weights.filter(w => w.name !== playerA);
         playerA = weightedRandom(altWeights);
         playerB = pickB(playerA)[0];
       }
     }
   }
-
   return [playerA, playerB];
 }
 
 // --- UI ---
-function relativeDate(ts) {
-  if (!ts) return 'a while ago';
-  const days = Math.floor((Date.now() - ts) / 86400000);
-  if (days === 0) return 'today';
-  if (days === 1) return 'yesterday';
-  return `${days} days ago`;
-}
-
-function lowGameCount(images) {
-  return Object.values(images).filter(img => img.games < PROGRESS_THRESHOLD).length;
-}
-
-function showLoadingView(data) {
-  document.getElementById('rating-view').style.display   = 'none';
-  document.getElementById('results-view').style.display  = 'none';
-  document.getElementById('corner-controls').style.display = 'none';
-  const view = document.getElementById('loading-view');
-  view.style.display = 'flex';
-
-  const hasData = Object.keys(data.images).length > 0;
-
-  if (!hasData) {
-    view.innerHTML = `
-      <div>
-        <div class="drop-zone" id="drop-zone">
-          <div class="icon">📁</div>
-          <p>Drop a folder here, or click to choose one</p>
-          <button class="btn" id="choose-btn">Choose folder</button>
-          <div style="margin-top:10px;font-size:11px;color:#444;">Accepts jpg, jpeg, png, gif, webp</div>
-        </div>
-        <div class="loading-error" id="loading-error"></div>
-      </div>`;
-  } else {
-    const count = Object.keys(data.images).length;
-    const low   = lowGameCount(data.images);
-    const progressText = low > 0
-      ? `${low} image${low === 1 ? '' : 's'} with fewer than ${PROGRESS_THRESHOLD} comparisons`
-      : 'All images have 5+ comparisons';
-    view.innerHTML = `
-      <div class="resume-card">
-        <h2>Welcome back</h2>
-        <div class="resume-meta">
-          ${count} image${count === 1 ? '' : 's'} ranked &middot; last session ${relativeDate(data.lastSession)}<br>
-          ${progressText}
-        </div>
-        <div class="resume-btns">
-          <button class="btn btn-primary" id="continue-btn">Load folder to continue</button>
-          <button class="btn" id="new-folder-btn">New folder</button>
-        </div>
-        <div class="loading-error" id="loading-error"></div>
-      </div>`;
-  }
-  wireLoadingEvents();
-}
-
-function showLoadingError(msg) {
-  const el = document.getElementById('loading-error');
-  if (!el) return;
-  el.textContent = msg;
-  el.style.display = 'block';
-}
-
-function showRatingView(nameA, nameB) {
-  document.getElementById('loading-view').style.display  = 'none';
-  document.getElementById('results-view').style.display  = 'none';
-  document.getElementById('rating-view').style.display   = 'flex';
-  document.getElementById('corner-controls').style.display = 'flex';
-  document.getElementById('results-toggle-btn').textContent = 'Results';
-
-  document.getElementById('img-a').src = appData.images[nameA].url;
-  document.getElementById('img-b').src = appData.images[nameB].url;
-  document.getElementById('panel-a').dataset.name = nameA;
-  document.getElementById('panel-b').dataset.name = nameB;
-  updateStats();
-}
-
-function showResultsView() {
-  document.getElementById('loading-view').style.display  = 'none';
-  document.getElementById('rating-view').style.display   = 'none';
-  document.getElementById('results-view').style.display  = 'flex';
-  document.getElementById('results-toggle-btn').textContent = '← Rate';
-
-  const loaded = Object.entries(appData.images)
-    .filter(([, v]) => v.url)
-    .sort((a, b) => b[1].score - a[1].score);
-
-  const grid = document.getElementById('results-grid');
-  grid.innerHTML = '';
-  loaded.forEach(([name, img], i) => {
-    const rank = i + 1;
-    const cell = document.createElement('div');
-    cell.className = 'thumb-cell';
-    cell.innerHTML = `
-      <img src="${img.url}" alt="">
-      <div class="thumb-rank${rank <= 3 ? ' top3' : ''}">#${rank}</div>
-      <div class="thumb-score">${Math.round(img.score)}</div>`;
-    grid.appendChild(cell);
-  });
-}
-
-function updateStats() {
-  const loadedImages = Object.fromEntries(Object.entries(appData.images).filter(([, v]) => v.url));
-  const low = lowGameCount(loadedImages);
-  document.getElementById('stats-session').textContent =
-    `${sessionComparisons} comparison${sessionComparisons === 1 ? '' : 's'} this session · ${appData.totalComparisons} total`;
-  document.getElementById('stats-progress').textContent =
-    low > 0
-      ? `${low} image${low === 1 ? '' : 's'} with fewer than ${PROGRESS_THRESHOLD} comparisons`
-      : 'Refining rankings';
-}
-
-function wireLoadingEvents() {
-  const input = document.getElementById('folder-input');
-
-  const chooseBtn = document.getElementById('choose-btn');
-  if (chooseBtn) chooseBtn.onclick = () => { pendingNewFolder = false; input.click(); };
-
-  const continueBtn = document.getElementById('continue-btn');
-  if (continueBtn) continueBtn.onclick = () => { pendingNewFolder = false; input.click(); };
-
-  const newFolderBtn = document.getElementById('new-folder-btn');
-  if (newFolderBtn) newFolderBtn.onclick = () => { pendingNewFolder = true; input.click(); };
-
-  const dropZone = document.getElementById('drop-zone');
-  if (dropZone) {
-    dropZone.ondragover = e => { e.preventDefault(); dropZone.classList.add('drag-over'); };
-    dropZone.ondragleave = () => dropZone.classList.remove('drag-over');
-    dropZone.ondrop = e => {
-      e.preventDefault();
-      dropZone.classList.remove('drag-over');
-      const item = e.dataTransfer.items && e.dataTransfer.items[0];
-      if (item) {
-        const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
-        if (entry && entry.isDirectory) {
-          collectFilesFromEntry(entry).then(files => onFolderLoaded(files));
-          return;
-        }
-      }
-      onFolderLoaded(e.dataTransfer.files);
-    };
-  }
-}
 
 // --- EVENTS ---
-let pendingNewFolder = false;
-
-function isAcceptedFile(file) {
-  return ACCEPTED_EXTS.has(file.name.split('.').pop().toLowerCase());
-}
-
-async function onFolderLoaded(files) {
-  const accepted = Array.from(files).filter(isAcceptedFile);
-
-  if (accepted.length < 2) {
-    showLoadingError('Select a folder with at least 2 supported images (jpg, jpeg, png, gif, webp).');
-    return;
-  }
-
-  mergeFolder(appData, accepted.map(f => f.name));
-
-  await Promise.all(accepted.map(file => new Promise(resolve => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => { appData.images[file.name].url = url; resolve(); };
-    img.onerror = () => {
-      console.warn('Skipping corrupt image:', file.name);
-      URL.revokeObjectURL(url);
-      resolve();
-    };
-    img.src = url;
-  })));
-
-  const loadedNames = Object.keys(appData.images).filter(n => appData.images[n].url);
-  if (loadedNames.length < 2) {
-    showLoadingError('Fewer than 2 images loaded successfully. Try a different folder.');
-    return;
-  }
-
-  saveData(appData);
-  startRating();
-}
-
-function startRating() {
-  const loadedImages = Object.fromEntries(
-    Object.entries(appData.images).filter(([, v]) => v.url)
-  );
-  const pair = selectNextPair(loadedImages, lastPair);
-  lastPair = pair;
-  showRatingView(pair[0], pair[1]);
-}
-
-function collectFilesFromEntry(dirEntry) {
-  return new Promise(resolve => {
-    const files = [];
-    const reader = dirEntry.createReader();
-    (function read() {
-      reader.readEntries(entries => {
-        if (!entries.length) { resolve(files); return; }
-        Promise.all(entries.map(e =>
-          e.isFile
-            ? new Promise(res => e.file(f => { files.push(f); res(); }))
-            : collectFilesFromEntry(e).then(sub => files.push(...sub))
-        )).then(read);
-      });
-    })();
-  });
-}
-
-document.getElementById('folder-input').addEventListener('change', e => {
-  if (!e.target.files.length) return;
-  if (pendingNewFolder) {
-    const ok = confirm('Load new folder? Existing scores for matching filenames will be kept.');
-    if (!ok) { e.target.value = ''; return; }
-  }
-  onFolderLoaded(e.target.files);
-  e.target.value = '';
-});
-
-document.getElementById('storage-warning').addEventListener('click', () => {
-  document.getElementById('storage-warning').style.display = 'none';
-});
-
-function onPick(winnerName, loserName) {
-  applyResult(winnerName, loserName, appData);
-  sessionComparisons++;
-  saveData(appData);
-  const loadedImages = Object.fromEntries(
-    Object.entries(appData.images).filter(([, v]) => v.url)
-  );
-  const pair = selectNextPair(loadedImages, lastPair);
-  lastPair = pair;
-  showRatingView(pair[0], pair[1]);
-}
-
-document.getElementById('panel-a').addEventListener('click', () => {
-  const a = document.getElementById('panel-a').dataset.name;
-  const b = document.getElementById('panel-b').dataset.name;
-  if (a && b) onPick(a, b);
-});
-
-document.getElementById('panel-b').addEventListener('click', () => {
-  const a = document.getElementById('panel-a').dataset.name;
-  const b = document.getElementById('panel-b').dataset.name;
-  if (a && b) onPick(b, a);
-});
-
-document.addEventListener('keydown', e => {
-  if (document.getElementById('rating-view').style.display === 'none') return;
-  const a = document.getElementById('panel-a').dataset.name;
-  const b = document.getElementById('panel-b').dataset.name;
-  if (!a || !b) return;
-  if (e.key === 'ArrowLeft')  onPick(a, b);
-  if (e.key === 'ArrowRight') onPick(b, a);
-});
-
-document.getElementById('results-toggle-btn').addEventListener('click', () => {
-  if (document.getElementById('results-view').style.display === 'none') {
-    showResultsView();
-  } else {
-    showRatingView(
-      document.getElementById('panel-a').dataset.name,
-      document.getElementById('panel-b').dataset.name
-    );
-  }
-});
-
-function exportCSV() {
-  const rows = Object.entries(appData.images)
-    .filter(([, img]) => img.games > 0 || img.url)
-    .sort((a, b) => b[1].score - a[1].score)
-    .map(([name, img]) =>
-      [name, img.score.toFixed(2), img.wins, img.losses, img.games].join(',')
-    );
-  const csv = ['filename,score,wins,losses,games', ...rows].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'elo-rankings.csv';
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-document.getElementById('export-btn').addEventListener('click', exportCSV);
 
 // --- INIT ---
-let appData = loadData();
-let sessionComparisons = 0;
-let lastPair = null;
-showLoadingView(appData);
 </script>
 </body>
 </html>
