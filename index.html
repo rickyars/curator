@@ -329,6 +329,91 @@ function selectNextPair(images, lastPair) {
 }
 
 // --- UI ---
+function showLoadingStatus(msg) {
+  document.getElementById('loading-view').innerHTML =
+    `<div style="text-align:center;color:#555;font-size:14px;">${msg}</div>`;
+}
+
+function lowGameCount(images) {
+  return Object.values(images).filter(img => img.games < PROGRESS_THRESHOLD).length;
+}
+
+function showRatingView(nameA, nameB) {
+  document.getElementById('loading-view').style.display  = 'none';
+  document.getElementById('results-view').style.display  = 'none';
+  document.getElementById('rating-view').style.display   = 'flex';
+  document.getElementById('corner-controls').style.display = 'flex';
+  document.getElementById('results-toggle-btn').textContent = 'Results';
+
+  document.getElementById('img-a').src = `images/${nameA}`;
+  document.getElementById('img-b').src = `images/${nameB}`;
+  document.getElementById('panel-a').dataset.name = nameA;
+  document.getElementById('panel-b').dataset.name = nameB;
+  updateStats();
+}
+
+function showResultsView() {
+  document.getElementById('loading-view').style.display  = 'none';
+  document.getElementById('rating-view').style.display   = 'none';
+  document.getElementById('results-view').style.display  = 'flex';
+  document.getElementById('results-toggle-btn').textContent = '← Rate';
+
+  renderResultsGrid();
+
+  // Live updates while results panel is open
+  resultsUnsubscribe = onValue(ref(db, 'images'), snap => {
+    const data = snap.val();
+    if (data) {
+      Object.assign(localScores, data);
+      renderResultsGrid();
+    }
+  });
+}
+
+function renderResultsGrid() {
+  const sorted = Object.entries(localScores)
+    .sort((a, b) => b[1].score - a[1].score);
+
+  const grid = document.getElementById('results-grid');
+  grid.innerHTML = '';
+  sorted.forEach(([name, img], i) => {
+    const rank = i + 1;
+    const cell = document.createElement('div');
+    cell.className = 'thumb-cell';
+    cell.innerHTML = `
+      <img src="images/${name}" alt="">
+      <div class="thumb-rank${rank <= 3 ? ' top3' : ''}">#${rank}</div>
+      <div class="thumb-score">${Math.round(img.score)}</div>`;
+    grid.appendChild(cell);
+  });
+}
+
+function updateStats() {
+  const low = lowGameCount(localScores);
+  document.getElementById('stats-session').textContent =
+    `${sessionComparisons} comparison${sessionComparisons === 1 ? '' : 's'} this session · ${totalComparisons} total`;
+  document.getElementById('stats-progress').textContent =
+    low > 0
+      ? `${low} image${low === 1 ? '' : 's'} with fewer than ${PROGRESS_THRESHOLD} comparisons`
+      : 'Refining rankings';
+}
+
+function exportCSV() {
+  const rows = Object.entries(localScores)
+    .filter(([, img]) => img.games > 0)
+    .sort((a, b) => b[1].score - a[1].score)
+    .map(([name, img]) =>
+      [name, img.score.toFixed(2), img.wins, img.losses, img.games].join(',')
+    );
+  const csv = ['filename,score,wins,losses,games', ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'elo-rankings.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 // --- EVENTS ---
 
