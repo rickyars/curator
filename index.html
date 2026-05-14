@@ -434,6 +434,54 @@ function showLoadingError(msg) {
   el.style.display = 'block';
 }
 
+function showRatingView(nameA, nameB) {
+  document.getElementById('loading-view').style.display  = 'none';
+  document.getElementById('results-view').style.display  = 'none';
+  document.getElementById('rating-view').style.display   = 'flex';
+  document.getElementById('corner-controls').style.display = 'flex';
+  document.getElementById('results-toggle-btn').textContent = 'Results';
+
+  document.getElementById('img-a').src = appData.images[nameA].url;
+  document.getElementById('img-b').src = appData.images[nameB].url;
+  document.getElementById('panel-a').dataset.name = nameA;
+  document.getElementById('panel-b').dataset.name = nameB;
+  updateStats();
+}
+
+function showResultsView() {
+  document.getElementById('loading-view').style.display  = 'none';
+  document.getElementById('rating-view').style.display   = 'none';
+  document.getElementById('results-view').style.display  = 'flex';
+  document.getElementById('results-toggle-btn').textContent = '← Rate';
+
+  const loaded = Object.entries(appData.images)
+    .filter(([, v]) => v.url)
+    .sort((a, b) => b[1].score - a[1].score);
+
+  const grid = document.getElementById('results-grid');
+  grid.innerHTML = '';
+  loaded.forEach(([name, img], i) => {
+    const rank = i + 1;
+    const cell = document.createElement('div');
+    cell.className = 'thumb-cell';
+    cell.innerHTML = `
+      <img src="${img.url}" alt="">
+      <div class="thumb-rank${rank <= 3 ? ' top3' : ''}">#${rank}</div>
+      <div class="thumb-score">${Math.round(img.score)}</div>`;
+    grid.appendChild(cell);
+  });
+}
+
+function updateStats() {
+  const low = lowGameCount(appData.images);
+  document.getElementById('stats-session').textContent =
+    `${sessionComparisons} comparison${sessionComparisons === 1 ? '' : 's'} this session · ${appData.totalComparisons} total`;
+  document.getElementById('stats-progress').textContent =
+    low > 0
+      ? `${low} image${low === 1 ? '' : 's'} with fewer than ${PROGRESS_THRESHOLD} comparisons`
+      : 'Refining rankings';
+}
+
 function wireLoadingEvents() { /* implemented in EVENTS section */ }
 
 // --- EVENTS ---
