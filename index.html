@@ -105,7 +105,7 @@ html, body {
   pointer-events: none;
   transition: border-color .1s;
 }
-.image-panel:hover::after { border-color: rgba(74,158,255,0.4); }
+.image-panel:hover { cursor: pointer; }
 
 .image-panel img {
   max-width: 100%;
@@ -309,8 +309,11 @@ function selectNextPair(images, lastPair) {
 
   const pickB = (excludeA) => {
     const others = names.filter(n => n !== excludeA);
-    let pool = others.filter(n => images[n].games < LOW_GAME_CAP);
-    if (pool.length === 0) pool = others;
+    // Prefer images not shown in the last pair
+    const fresh = lastPair ? others.filter(n => !lastPair.includes(n)) : others;
+    const source = fresh.length >= 1 ? fresh : others;
+    let pool = source.filter(n => images[n].games < LOW_GAME_CAP);
+    if (pool.length === 0) pool = source;
     pool.sort((a, b) =>
       Math.abs(images[a].score - images[excludeA].score) -
       Math.abs(images[b].score - images[excludeA].score)
