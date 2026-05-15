@@ -141,19 +141,22 @@ html, body {
   overflow-y: auto;
   padding: 16px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
   align-content: start;
 }
 
 .thumb-cell {
   position: relative;
-  aspect-ratio: 1;
   border-radius: 4px;
   overflow: hidden;
   background: #111;
+  height: 0;
+  padding-bottom: 100%;
 }
 .thumb-cell img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -248,24 +251,26 @@ html, body {
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getDatabase, ref, get, update, runTransaction, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import FIREBASE_CONFIG from './firebase-config.js';
 
 // --- CONFIG ---
-// REPLACE these placeholder values with your Firebase project config
-// from console.firebase.google.com → Project settings → Your apps → SDK setup
-const FIREBASE_CONFIG = {
-  apiKey:            "REPLACE_ME",
-  authDomain:        "REPLACE_ME.firebaseapp.com",
-  databaseURL:       "https://REPLACE_ME-default-rtdb.firebaseio.com",
-  projectId:         "REPLACE_ME",
-  storageBucket:     "REPLACE_ME.appspot.com",
-  messagingSenderId: "REPLACE_ME",
-  appId:             "REPLACE_ME"
-};
 const K_HIGH = 32;
 const K_LOW  = 16;
 const K_THRESHOLD = 10;
 const LOW_GAME_CAP = 15;
 const PROGRESS_THRESHOLD = 5;
+
+// Firebase keys can't contain . / # $ [ ]  — encode/decode for storage
+function toFirebaseKey(name) {
+  return name.replace(/\./g, '__dot__').replace(/\//g, '__sl__')
+             .replace(/#/g, '__hash__').replace(/\$/g, '__dol__')
+             .replace(/\[/g, '__lb__').replace(/\]/g, '__rb__');
+}
+function fromFirebaseKey(key) {
+  return key.replace(/__dot__/g, '.').replace(/__sl__/g, '/')
+            .replace(/__hash__/g, '#').replace(/__dol__/g, '$')
+            .replace(/__lb__/g, '[').replace(/__rb__/g, ']');
+}
 
 // --- GLOBALS ---
 const app = initializeApp(FIREBASE_CONFIG);
@@ -367,7 +372,8 @@ function showResultsView() {
     const data = snap.val();
     if (data) {
       for (const key of manifestSet) {
-        if (data[key]) localScores[key] = data[key];
+        const fbKey = toFirebaseKey(key);
+        if (data[fbKey]) localScores[key] = data[fbKey];
       }
       renderResultsGrid();
     }
@@ -421,8 +427,8 @@ function exportCSV() {
 
 // --- EVENTS ---
 async function applyResultFirebase(winnerName, loserName) {
-  const winRef  = ref(db, `images/${winnerName}`);
-  const loseRef = ref(db, `images/${loserName}`);
+  const winRef  = ref(db, `images/${toFirebaseKey(winnerName)}`);
+  const loseRef = ref(db, `images/${toFirebaseKey(loserName)}`);
 
   const [winResult, loseResult] = await Promise.all([
     runTransaction(winRef, current => {
@@ -536,7 +542,11 @@ async function init() {
   let firebaseImages = {};
   try {
     const snap = await get(ref(db, 'images'));
-    firebaseImages = snap.val() || {};
+    const raw = snap.val() || {};
+    // Decode Firebase keys back to original filenames
+    for (const [key, val] of Object.entries(raw)) {
+      firebaseImages[fromFirebaseKey(key)] = val;
+    }
   } catch (e) {
     showLoadingStatus(`Error: could not connect to Firebase (${e.message}). Check FIREBASE_CONFIG.`);
     return;
@@ -551,7 +561,7 @@ async function init() {
     if (!localScores[name]) {
       const entry = { score: 1000, wins: 0, losses: 0, games: 0 };
       localScores[name] = entry;
-      missing[name] = entry;
+      missing[toFirebaseKey(name)] = entry;  // encode key for Firebase
     }
   }
   if (Object.keys(missing).length > 0) {

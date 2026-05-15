@@ -6,3 +6,4 @@ package-lock.json
 *.log
 images/*
 !images/.gitkeep
+firebase-config.js
