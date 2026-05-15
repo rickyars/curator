@@ -302,7 +302,10 @@ function weightedRandom(items) {
 function selectNextPair(images, lastPair) {
   const names = Object.keys(images);
   const weights = names.map(n => ({ name: n, weight: 1 / (images[n].games + 1) }));
-  let playerA = weightedRandom(weights);
+  const freshWeights = lastPair && names.length > 3
+    ? weights.filter(w => !lastPair.includes(w.name))
+    : weights;
+  let playerA = weightedRandom(freshWeights.length ? freshWeights : weights);
 
   const pickB = (excludeA) => {
     const others = names.filter(n => n !== excludeA);
@@ -316,7 +319,8 @@ function selectNextPair(images, lastPair) {
   };
 
   let bCandidates = pickB(playerA);
-  let playerB = bCandidates[0];
+  const topN = bCandidates.slice(0, Math.min(3, bCandidates.length));
+  let playerB = topN[Math.floor(Math.random() * topN.length)];
 
   if (lastPair && names.length > 2) {
     const [la, lb] = lastPair;
@@ -328,7 +332,8 @@ function selectNextPair(images, lastPair) {
       } else {
         const altWeights = weights.filter(w => w.name !== playerA);
         playerA = weightedRandom(altWeights);
-        playerB = pickB(playerA)[0];
+        const altTop = pickB(playerA).slice(0, 3);
+        playerB = altTop[Math.floor(Math.random() * altTop.length)];
       }
     }
   }
