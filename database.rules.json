@@ -1,0 +1,16 @@
+{
+  "rules": {
+    "images": {
+      ".read": true,
+      "$imageKey": {
+        ".write": true,
+        ".validate": "newData.hasChildren(['score', 'wins', 'losses', 'games']) && newData.child('score').isNumber() && newData.child('wins').isNumber() && newData.child('losses').isNumber() && newData.child('games').isNumber()"
+      }
+    },
+    "totalComparisons": {
+      ".read": true,
+      ".write": true,
+      ".validate": "newData.isNumber()"
+    }
+  }
+}
