@@ -97,15 +97,6 @@ html, body {
   overflow: hidden;
   position: relative;
 }
-.image-panel::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border: 3px solid transparent;
-  pointer-events: none;
-  transition: border-color .1s;
-}
-.image-panel:hover::after { border-color: rgba(74,158,255,0.4); }
 
 .image-panel img {
   max-width: 100%;
@@ -449,6 +440,22 @@ function showRatingView(nameA, nameB) {
   updateStats();
 }
 
+function makeThumbnail(url) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const scale = 320 / Math.max(img.naturalWidth, img.naturalHeight);
+      canvas.width  = Math.round(img.naturalWidth  * scale);
+      canvas.height = Math.round(img.naturalHeight * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => resolve(URL.createObjectURL(blob)), 'image/jpeg', 0.8);
+    };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
 function showResultsView() {
   document.getElementById('loading-view').style.display  = 'none';
   document.getElementById('rating-view').style.display   = 'none';
@@ -461,15 +468,38 @@ function showResultsView() {
 
   const grid = document.getElementById('results-grid');
   grid.innerHTML = '';
+
+  const observer = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      observer.unobserve(entry.target);
+      const cell = entry.target;
+      const record = appData.images[cell.dataset.name];
+      if (!record?.url) continue;
+      if (record.thumbUrl) {
+        cell.querySelector('img').src = record.thumbUrl;
+      } else {
+        makeThumbnail(record.url).then(thumbUrl => {
+          if (thumbUrl) {
+            record.thumbUrl = thumbUrl;
+            cell.querySelector('img').src = thumbUrl;
+          }
+        });
+      }
+    }
+  }, { rootMargin: '200px' });
+
   loaded.forEach(([name, img], i) => {
     const rank = i + 1;
     const cell = document.createElement('div');
     cell.className = 'thumb-cell';
+    cell.dataset.name = name;
     cell.innerHTML = `
-      <img src="${img.url}" alt="">
+      <img src="" alt="">
       <div class="thumb-rank${rank <= 3 ? ' top3' : ''}">#${rank}</div>
       <div class="thumb-score">${Math.round(img.score)}</div>`;
     grid.appendChild(cell);
+    observer.observe(cell);
   });
 }
 
@@ -533,17 +563,9 @@ async function onFolderLoaded(files) {
 
   mergeFolder(appData, accepted.map(f => f.name));
 
-  await Promise.all(accepted.map(file => new Promise(resolve => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => { appData.images[file.name].url = url; resolve(); };
-    img.onerror = () => {
-      console.warn('Skipping corrupt image:', file.name);
-      URL.revokeObjectURL(url);
-      resolve();
-    };
-    img.src = url;
-  })));
+  for (const file of accepted) {
+    appData.images[file.name].url = URL.createObjectURL(file);
+  }
 
   const loadedNames = Object.keys(appData.images).filter(n => appData.images[n].url);
   if (loadedNames.length < 2) {
