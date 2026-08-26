@@ -4,216 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Image Elo Rater</title>
-<style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-html, body {
-  height: 100%;
-  background: #0d0d0d;
-  color: #ccc;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  overflow: hidden;
-}
-
-/* ── Buttons ──────────────────────────────────────────────── */
-.btn {
-  padding: 7px 14px;
-  border-radius: 6px;
-  border: 1px solid #333;
-  background: #1e1e1e;
-  color: #ccc;
-  font-size: 12px;
-  cursor: pointer;
-}
-.btn:hover { background: #2a2a2a; }
-.btn-primary {
-  background: #1a3a1a;
-  border-color: #2a5a2a;
-  color: #6acc6a;
-}
-.btn-primary:hover { background: #1f481f; }
-
-/* ── Loading view ─────────────────────────────────────────── */
-#loading-view {
-  height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.drop-zone {
-  border: 2px dashed #333;
-  border-radius: 12px;
-  padding: 56px 72px;
-  text-align: center;
-  color: #555;
-  cursor: pointer;
-  transition: border-color .15s, color .15s;
-}
-.drop-zone:hover, .drop-zone.drag-over { border-color: #555; color: #888; }
-.drop-zone .icon { font-size: 40px; margin-bottom: 12px; }
-.drop-zone p { font-size: 14px; margin-bottom: 16px; }
-
-.resume-card {
-  background: #161616;
-  border: 1px solid #2a2a2a;
-  border-radius: 10px;
-  padding: 32px 40px;
-  text-align: center;
-  min-width: 320px;
-}
-.resume-card h2 { font-size: 17px; color: #ddd; margin-bottom: 6px; }
-.resume-meta { font-size: 12px; color: #666; line-height: 1.7; }
-.resume-btns { display: flex; gap: 10px; justify-content: center; margin-top: 20px; }
-
-.loading-error {
-  margin-top: 14px;
-  font-size: 12px;
-  color: #c44;
-  display: none;
-  text-align: center;
-}
-
-/* ── Rating view ──────────────────────────────────────────── */
-#rating-view {
-  height: 100vh;
-  display: none;
-  flex-direction: column;
-}
-
-.images-row {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-}
-
-.image-panel {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  background: #0a0a0a;
-  overflow: hidden;
-  position: relative;
-}
-.image-panel::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border: 3px solid transparent;
-  pointer-events: none;
-  transition: border-color .1s;
-}
-.image-panel:hover { cursor: pointer; }
-
-.image-panel img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  display: block;
-  pointer-events: none;
-}
-
-.image-divider { width: 3px; background: #0d0d0d; flex-shrink: 0; }
-
-.stats-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 7px 16px;
-  background: #111;
-  border-top: 1px solid #1e1e1e;
-  flex-shrink: 0;
-}
-.stats-bar span { font-size: 11px; color: #444; }
-
-/* ── Results view ─────────────────────────────────────────── */
-#results-view {
-  height: 100vh;
-  display: none;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.results-grid {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 10px;
-  align-content: start;
-}
-
-.thumb-cell {
-  position: relative;
-  border-radius: 4px;
-  overflow: hidden;
-  background: #111;
-  height: 0;
-  padding-bottom: 100%;
-}
-.thumb-cell img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.thumb-rank {
-  position: absolute;
-  top: 5px;
-  left: 5px;
-  background: rgba(0,0,0,0.75);
-  color: #ccc;
-  font-size: 10px;
-  font-weight: 600;
-  padding: 2px 5px;
-  border-radius: 3px;
-  line-height: 1.4;
-}
-.thumb-rank.top3 { color: #f0c040; }
-.thumb-score {
-  position: absolute;
-  bottom: 5px;
-  right: 5px;
-  background: rgba(0,0,0,0.75);
-  color: #aaa;
-  font-size: 10px;
-  padding: 2px 5px;
-  border-radius: 3px;
-  line-height: 1.4;
-}
-
-/* ── Fixed corner controls ────────────────────────────────── */
-#corner-controls {
-  position: fixed;
-  top: 12px;
-  right: 14px;
-  z-index: 100;
-  display: flex;
-  gap: 6px;
-}
-
-/* ── Storage warning banner ───────────────────────────────── */
-#storage-warning {
-  position: fixed;
-  bottom: 40px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #3a1a1a;
-  border: 1px solid #7a3a3a;
-  color: #e8a0a0;
-  font-size: 12px;
-  padding: 8px 16px;
-  border-radius: 6px;
-  display: none;
-  z-index: 200;
-  cursor: pointer;
-}
-</style>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 
@@ -225,9 +16,9 @@ html, body {
 <!-- Rating view -->
 <div id="rating-view">
   <div class="images-row">
-    <div class="image-panel" id="panel-a"><img id="img-a" src="" alt=""></div>
+    <div class="image-panel" id="panel-a"><img id="img-a" src="" alt=""><button class="flag-btn" id="flag-a" title="Remove from tournament">🗑️</button></div>
     <div class="image-divider"></div>
-    <div class="image-panel" id="panel-b"><img id="img-b" src="" alt=""></div>
+    <div class="image-panel" id="panel-b"><img id="img-b" src="" alt=""><button class="flag-btn" id="flag-b" title="Remove from tournament">🗑️</button></div>
   </div>
   <div class="stats-bar">
     <span id="stats-session"></span>
@@ -241,9 +32,16 @@ html, body {
   <div class="results-grid" id="results-grid"></div>
 </div>
 
+<!-- Removed view -->
+<div id="removed-view">
+  <div class="removed-empty" id="removed-empty" style="display:none;">No images removed</div>
+  <div class="results-grid" id="removed-grid"></div>
+</div>
+
 <!-- Fixed corner controls (always visible once a folder is loaded) -->
 <div id="corner-controls" style="display:none;">
   <button class="btn" id="results-toggle-btn">Results</button>
+  <button class="btn" id="removed-toggle-btn">Removed</button>
   <button class="btn" id="export-btn">Export CSV</button>
 </div>
 
@@ -282,6 +80,11 @@ let totalComparisons   = 0;    // kept in sync by onValue listener
 let resultsUnsubscribe = null; // detaches onValue when results view closes
 let picking = false;           // prevents double-votes during Firebase round-trip
 let manifestSet = new Set();   // set of valid filenames from images.json
+let nextPair = null;           // preselected + prefetched upcoming pair
+
+function imageURL(name) {
+  return 'images/' + name.split('/').map(encodeURIComponent).join('/');
+}
 
 // --- ELO ---
 function expectedScore(scoreA, scoreB) {
@@ -345,23 +148,33 @@ function selectNextPair(images, lastPair) {
 
 // --- UI ---
 function showLoadingStatus(msg) {
-  document.getElementById('loading-view').innerHTML =
-    `<div style="text-align:center;color:#555;font-size:14px;">${msg}</div>`;
+  const view = document.getElementById('loading-view');
+  view.innerHTML = '<div style="text-align:center;color:#555;font-size:14px;"></div>';
+  view.firstChild.textContent = msg;
 }
 
 function lowGameCount(images) {
   return Object.values(images).filter(img => img.games < PROGRESS_THRESHOLD).length;
 }
 
+function ratableImages() {
+  return Object.fromEntries(Object.entries(localScores).filter(([, v]) => !v.flagged));
+}
+
+function flaggedImages() {
+  return Object.entries(localScores).filter(([, v]) => v.flagged);
+}
+
 function showRatingView(nameA, nameB) {
   document.getElementById('loading-view').style.display  = 'none';
   document.getElementById('results-view').style.display  = 'none';
+  document.getElementById('removed-view').style.display  = 'none';
   document.getElementById('rating-view').style.display   = 'flex';
   document.getElementById('corner-controls').style.display = 'flex';
   document.getElementById('results-toggle-btn').textContent = 'Results';
 
-  document.getElementById('img-a').src = `images/${nameA}`;
-  document.getElementById('img-b').src = `images/${nameB}`;
+  document.getElementById('img-a').src = imageURL(nameA);
+  document.getElementById('img-b').src = imageURL(nameB);
   document.getElementById('panel-a').dataset.name = nameA;
   document.getElementById('panel-b').dataset.name = nameB;
   updateStats();
@@ -370,12 +183,14 @@ function showRatingView(nameA, nameB) {
 function showResultsView() {
   document.getElementById('loading-view').style.display  = 'none';
   document.getElementById('rating-view').style.display   = 'none';
+  document.getElementById('removed-view').style.display  = 'none';
   document.getElementById('results-view').style.display  = 'flex';
   document.getElementById('results-toggle-btn').textContent = '← Rate';
 
   renderResultsGrid();
 
   // Live updates while results panel is open
+  if (resultsUnsubscribe) { resultsUnsubscribe(); resultsUnsubscribe = null; }
   resultsUnsubscribe = onValue(ref(db, 'images'), snap => {
     const data = snap.val();
     if (data) {
@@ -389,31 +204,70 @@ function showResultsView() {
 }
 
 function renderResultsGrid() {
-  const sorted = Object.entries(localScores)
+  const sorted = Object.entries(ratableImages())
     .sort((a, b) => b[1].score - a[1].score);
 
   const grid = document.getElementById('results-grid');
   grid.innerHTML = '';
-  sorted.forEach(([name, img], i) => {
+  sorted.forEach(([name, record], i) => {
     const rank = i + 1;
     const cell = document.createElement('div');
     cell.className = 'thumb-cell';
-    cell.innerHTML = `
-      <img src="images/${name}" alt="">
-      <div class="thumb-rank${rank <= 3 ? ' top3' : ''}">#${rank}</div>
-      <div class="thumb-score">${Math.round(img.score)}</div>`;
+    const thumb = document.createElement('img');
+    thumb.src = imageURL(name);
+    thumb.alt = '';
+    const rankEl = document.createElement('div');
+    rankEl.className = 'thumb-rank' + (rank <= 3 ? ' top3' : '');
+    rankEl.textContent = `#${rank}`;
+    const scoreEl = document.createElement('div');
+    scoreEl.className = 'thumb-score';
+    scoreEl.textContent = Math.round(record.score);
+    cell.append(thumb, rankEl, scoreEl);
     grid.appendChild(cell);
   });
 }
 
 function updateStats() {
-  const low = lowGameCount(localScores);
+  const low = lowGameCount(ratableImages());
   document.getElementById('stats-session').textContent =
     `${sessionComparisons} comparison${sessionComparisons === 1 ? '' : 's'} this session · ${totalComparisons} total`;
   document.getElementById('stats-progress').textContent =
     low > 0
       ? `${low} image${low === 1 ? '' : 's'} with fewer than ${PROGRESS_THRESHOLD} comparisons`
       : 'Refining rankings';
+  updateRemovedBadge();
+}
+
+function updateRemovedBadge() {
+  const n = flaggedImages().length;
+  document.getElementById('removed-toggle-btn').textContent = n > 0 ? `Removed (${n})` : 'Removed';
+}
+
+function showRemovedView() {
+  document.getElementById('loading-view').style.display  = 'none';
+  document.getElementById('rating-view').style.display   = 'none';
+  document.getElementById('results-view').style.display  = 'none';
+  document.getElementById('removed-view').style.display  = 'flex';
+  document.getElementById('results-toggle-btn').textContent = 'Results';
+
+  const entries = flaggedImages().sort((a, b) => a[0].localeCompare(b[0]));
+  const grid = document.getElementById('removed-grid');
+  grid.innerHTML = '';
+  document.getElementById('removed-empty').style.display = entries.length === 0 ? 'flex' : 'none';
+
+  entries.forEach(([name]) => {
+    const cell = document.createElement('div');
+    cell.className = 'thumb-cell';
+    const img = document.createElement('img');
+    img.src = imageURL(name);
+    img.alt = '';
+    const restoreBtn = document.createElement('button');
+    restoreBtn.className = 'restore-btn';
+    restoreBtn.textContent = 'Restore';
+    restoreBtn.onclick = () => unflagImage(name);
+    cell.append(img, restoreBtn);
+    grid.appendChild(cell);
+  });
 }
 
 function exportCSV() {
@@ -434,39 +288,61 @@ function exportCSV() {
 }
 
 // --- EVENTS ---
+// Single transaction over the whole images node: both Elo updates commit
+// atomically and always use fresh server-side scores (no stale opponent).
 async function applyResultFirebase(winnerName, loserName) {
-  const winRef  = ref(db, `images/${toFirebaseKey(winnerName)}`);
-  const loseRef = ref(db, `images/${toFirebaseKey(loserName)}`);
+  const winKey  = toFirebaseKey(winnerName);
+  const loseKey = toFirebaseKey(loserName);
 
-  const [winResult, loseResult] = await Promise.all([
-    runTransaction(winRef, current => {
-      if (current === null) return current;
-      const kWinner = current.games < K_THRESHOLD ? K_HIGH : K_LOW;
-      const exp = expectedScore(current.score, localScores[loserName].score);
-      return {
-        score:   current.score + kWinner * (1 - exp),
-        wins:    current.wins + 1,
-        losses:  current.losses,
-        games:   current.games + 1,
-      };
-    }),
-    runTransaction(loseRef, current => {
-      if (current === null) return current;
-      const kLoser = current.games < K_THRESHOLD ? K_HIGH : K_LOW;
-      const exp = expectedScore(localScores[winnerName].score, current.score);
-      return {
-        score:   current.score - kLoser * (1 - exp),
-        wins:    current.wins,
-        losses:  current.losses + 1,
-        games:   current.games + 1,
-      };
-    }),
-  ]);
+  const result = await runTransaction(ref(db, 'images'), current => {
+    // First attempt may run against a null local cache; seed it from our
+    // in-memory copy — the server rejects and retries with real data if stale.
+    const images = current !== null
+      ? current
+      : Object.fromEntries(Object.entries(localScores).map(([n, v]) => [toFirebaseKey(n), v]));
+    const w = images[winKey];
+    const l = images[loseKey];
+    if (!w || !l) return;  // abort: entries missing server-side
 
-  if (winResult.committed)  localScores[winnerName] = winResult.snapshot.val();
-  if (loseResult.committed) localScores[loserName]  = loseResult.snapshot.val();
+    const kWinner = w.games < K_THRESHOLD ? K_HIGH : K_LOW;
+    const kLoser  = l.games < K_THRESHOLD ? K_HIGH : K_LOW;
+    const exp = expectedScore(w.score, l.score);
+    images[winKey] = {
+      ...w,
+      score:  w.score + kWinner * (1 - exp),
+      wins:   w.wins + 1,
+      losses: w.losses,
+      games:  w.games + 1,
+    };
+    images[loseKey] = {
+      ...l,
+      score:  l.score - kLoser * (1 - exp),
+      wins:   l.wins,
+      losses: l.losses + 1,
+      games:  l.games + 1,
+    };
+    return images;
+  });
 
-  runTransaction(ref(db, 'totalComparisons'), n => (n || 0) + 1);
+  if (result.committed) {
+    const data = result.snapshot.val() || {};
+    for (const name of manifestSet) {
+      const val = data[toFirebaseKey(name)];
+      if (val) localScores[name] = val;
+    }
+  }
+
+  runTransaction(ref(db, 'totalComparisons'), n => (n || 0) + 1).catch(() => {});
+}
+
+// Pick the upcoming pair while the user is still deciding the current one,
+// and start the image downloads so the next round appears instantly.
+function preloadNextPair(currentPair) {
+  nextPair = selectNextPair(ratableImages(), currentPair);
+  for (const name of nextPair) {
+    const img = new Image();
+    img.src = imageURL(name);
+  }
 }
 
 async function onPick(winnerName, loserName) {
@@ -475,9 +351,12 @@ async function onPick(winnerName, loserName) {
   try {
     await applyResultFirebase(winnerName, loserName);
     sessionComparisons++;
-    const pair = selectNextPair(localScores, lastPair);
+    const pair = nextPair && !nextPair.some(n => localScores[n].flagged)
+      ? nextPair
+      : selectNextPair(ratableImages(), lastPair);
     lastPair = pair;
     showRatingView(pair[0], pair[1]);
+    preloadNextPair(pair);
   } catch (e) {
     showLoadingStatus(`Error saving vote: ${e.message}. Reload to reconnect.`);
   } finally {
@@ -486,9 +365,54 @@ async function onPick(winnerName, loserName) {
 }
 
 function startRating() {
-  const pair = selectNextPair(localScores, lastPair);
+  const pool = ratableImages();
+  if (Object.keys(pool).length < 2) {
+    showLoadingStatus('Fewer than 2 non-removed images remain. Restore some from Removed.');
+    return;
+  }
+  const pair = selectNextPair(pool, lastPair);
   lastPair = pair;
   showRatingView(pair[0], pair[1]);
+  preloadNextPair(pair);
+}
+
+// --- FLAGGING ---
+async function setFlag(name, flagged) {
+  const key = ref(db, `images/${toFirebaseKey(name)}`);
+  const result = await runTransaction(key, current => {
+    if (current === null) return current;
+    current.flagged = flagged;
+    return current;
+  });
+  if (result.committed && result.snapshot.val()) {
+    localScores[name] = result.snapshot.val();
+  } else {
+    localScores[name].flagged = flagged; // best-effort local fallback
+  }
+}
+
+async function flagImage(name) {
+  try {
+    await setFlag(name, true);
+  } catch (e) {
+    showLoadingStatus(`Error flagging image: ${e.message}`);
+    return;
+  }
+  updateRemovedBadge();
+  startRating();
+}
+
+async function unflagImage(name) {
+  try {
+    await setFlag(name, false);
+  } catch (e) {
+    showLoadingStatus(`Error restoring image: ${e.message}`);
+    return;
+  }
+  updateRemovedBadge();
+  if (document.getElementById('removed-view').style.display !== 'none') {
+    showRemovedView();
+  }
 }
 
 document.getElementById('panel-a').addEventListener('click', () => {
@@ -521,6 +445,27 @@ document.getElementById('results-toggle-btn').addEventListener('click', () => {
       document.getElementById('panel-a').dataset.name,
       document.getElementById('panel-b').dataset.name
     );
+  }
+});
+
+document.getElementById('flag-a').addEventListener('click', e => {
+  e.stopPropagation();
+  const a = document.getElementById('panel-a').dataset.name;
+  if (a) flagImage(a);
+});
+
+document.getElementById('flag-b').addEventListener('click', e => {
+  e.stopPropagation();
+  const b = document.getElementById('panel-b').dataset.name;
+  if (b) flagImage(b);
+});
+
+document.getElementById('removed-toggle-btn').addEventListener('click', () => {
+  if (document.getElementById('removed-view').style.display === 'none') {
+    if (resultsUnsubscribe) { resultsUnsubscribe(); resultsUnsubscribe = null; }
+    showRemovedView();
+  } else {
+    startRating();
   }
 });
 
@@ -562,12 +507,15 @@ async function init() {
 
   manifestSet = new Set(filenames);
 
-  // 3. Build localScores — start from Firebase, add missing entries
-  localScores = { ...firebaseImages };
+  // 3. Build localScores — only images in the manifest (Firebase keeps scores
+  //    for removed images, but they must not show up in pairing or results)
+  localScores = {};
   const missing = {};
   for (const name of filenames) {
-    if (!localScores[name]) {
-      const entry = { score: 1000, wins: 0, losses: 0, games: 0 };
+    if (firebaseImages[name]) {
+      localScores[name] = firebaseImages[name];
+    } else {
+      const entry = { score: 1000, wins: 0, losses: 0, games: 0, flagged: false };
       localScores[name] = entry;
       missing[toFirebaseKey(name)] = entry;  // encode key for Firebase
     }
