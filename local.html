@@ -14,9 +14,9 @@
 <!-- Rating view -->
 <div id="rating-view">
   <div class="images-row">
-    <div class="image-panel" id="panel-a"><img id="img-a" src="" alt=""><button class="flag-btn" id="flag-a" title="Remove from tournament">🗑️</button></div>
+    <div class="image-panel" id="panel-a"><img id="img-a" src="" alt=""><div class="img-error" id="img-error-a" style="display:none;"></div><button class="flag-btn" id="flag-a" title="Remove from tournament">🗑️</button></div>
     <div class="image-divider"></div>
-    <div class="image-panel" id="panel-b"><img id="img-b" src="" alt=""><button class="flag-btn" id="flag-b" title="Remove from tournament">🗑️</button></div>
+    <div class="image-panel" id="panel-b"><img id="img-b" src="" alt=""><div class="img-error" id="img-error-b" style="display:none;"></div><button class="flag-btn" id="flag-b" title="Remove from tournament">🗑️</button></div>
   </div>
   <div class="stats-bar">
     <span id="stats-session"></span>
@@ -27,11 +27,23 @@
 
 <!-- Results view -->
 <div id="results-view">
+  <div class="results-toolbar">
+    <button class="btn" id="results-jump-top-btn">&uarr; Top</button>
+    <button class="btn" id="results-prev-btn">&larr; Prev</button>
+    <span id="results-page-label"></span>
+    <button class="btn" id="results-next-btn">Next &rarr;</button>
+    <button class="btn" id="results-jump-bottom-btn">&darr; Bottom</button>
+  </div>
   <div class="results-grid" id="results-grid"></div>
 </div>
 
 <!-- Removed view -->
 <div id="removed-view">
+  <div class="results-toolbar">
+    <button class="btn" id="removed-prev-btn">&larr; Prev</button>
+    <span id="removed-page-label"></span>
+    <button class="btn" id="removed-next-btn">Next &rarr;</button>
+  </div>
   <div class="removed-empty" id="removed-empty" style="display:none;">No images removed</div>
   <div class="results-grid" id="removed-grid"></div>
 </div>
@@ -122,6 +134,14 @@ function applyResult(winnerName, loserName, data) {
 }
 
 // --- PAIRING ---
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 function weightedRandom(items) {
   const total = items.reduce((sum, x) => sum + x.weight, 0);
   let r = Math.random() * total;
@@ -133,51 +153,36 @@ function weightedRandom(items) {
 }
 
 function selectNextPair(images, lastPair) {
-  const names = Object.keys(images);
+  const allNames = Object.keys(images);
 
-  // Player A: weighted by 1/(games+1), preferring images not in the last pair
+  // Never reoffer either image from the immediately previous pair — a hard
+  // exclusion, not just a bias — whenever the pool is big enough to allow it.
+  const excludeSet = lastPair ? new Set(lastPair) : new Set();
+  const available = allNames.filter(n => !excludeSet.has(n));
+  const names = available.length >= 2 ? available : allNames;
+
+  // Player A: weighted by 1/(games+1) — zero-game images have highest priority
   const weights = names.map(n => ({ name: n, weight: 1 / (images[n].games + 1) }));
-  const freshWeights = lastPair && names.length > 3
-    ? weights.filter(w => !lastPair.includes(w.name))
-    : weights;
-  let playerA = weightedRandom(freshWeights.length ? freshWeights : weights);
+  const playerA = weightedRandom(weights);
 
   // Player B: closest Elo among low-game candidates; fall back to all if none qualify
   const pickB = (excludeA) => {
     const others = names.filter(n => n !== excludeA);
-    // Prefer images not shown in the last pair
-    const fresh = lastPair ? others.filter(n => !lastPair.includes(n)) : others;
-    const source = fresh.length >= 1 ? fresh : others;
-    let pool = source.filter(n => images[n].games < LOW_GAME_CAP);
-    if (pool.length === 0) pool = source;
-    pool.sort((a, b) =>
+    let pool = others.filter(n => images[n].games < LOW_GAME_CAP);
+    if (pool.length === 0) pool = others;
+    // Shuffle first: Array.sort is stable, so without this, tied scores
+    // (e.g. everyone at the 1000 starting score) would always resolve in
+    // the same insertion/alphabetical order instead of randomly.
+    shuffle(pool).sort((a, b) =>
       Math.abs(images[a].score - images[excludeA].score) -
       Math.abs(images[b].score - images[excludeA].score)
     );
     return pool;
   };
 
-  let bCandidates = pickB(playerA);
+  const bCandidates = pickB(playerA);
   const topN = bCandidates.slice(0, Math.min(3, bCandidates.length));
-  let playerB = topN[Math.floor(Math.random() * topN.length)];
-
-  // Avoid repeating the exact same pair back-to-back (only when >2 images)
-  if (lastPair && names.length > 2) {
-    const [la, lb] = lastPair;
-    const isRepeat = (playerA === la && playerB === lb) ||
-                     (playerA === lb && playerB === la);
-    if (isRepeat) {
-      if (bCandidates.length > 1) {
-        playerB = bCandidates[1];
-      } else {
-        // Re-pick A from remaining candidates and recompute B
-        const altWeights = weights.filter(w => w.name !== playerA);
-        playerA = weightedRandom(altWeights);
-        const altTop = pickB(playerA).slice(0, 3);
-        playerB = altTop[Math.floor(Math.random() * altTop.length)];
-      }
-    }
-  }
+  const playerB = topN[Math.floor(Math.random() * topN.length)];
 
   return [playerA, playerB];
 }
@@ -216,39 +221,36 @@ function showLoadingView(data) {
   view.style.display = 'flex';
 
   const hasData = Object.keys(data.images).length > 0;
+  const count = Object.keys(data.images).length;
+  const statusLine = hasData
+    ? `<div style="margin-top:10px;font-size:11px;color:#555;">${count} image${count === 1 ? '' : 's'} ranked so far &middot; last session ${relativeDate(data.lastSession)}</div>`
+    : '';
+  const resetBtn = hasData
+    ? `<button class="btn btn-danger" id="reset-data-btn" style="margin-top:12px;">Reset data</button>`
+    : '';
 
-  if (!hasData) {
-    view.innerHTML = `
-      <div>
-        <div class="drop-zone" id="drop-zone">
-          <div class="icon">📁</div>
-          <p>Drop a folder here, or click to choose one</p>
-          <button class="btn" id="choose-btn">Choose folder</button>
-          <div style="margin-top:10px;font-size:11px;color:#444;">Accepts jpg, jpeg, png, gif, webp</div>
-        </div>
-        <div class="loading-error" id="loading-error"></div>
-      </div>`;
-  } else {
-    const count = Object.keys(data.images).length;
-    const low   = lowGameCount(data.images);
-    const progressText = low > 0
-      ? `${low} image${low === 1 ? '' : 's'} with fewer than ${PROGRESS_THRESHOLD} comparisons`
-      : 'All images have 5+ comparisons';
-    view.innerHTML = `
-      <div class="resume-card">
-        <h2>Welcome back</h2>
-        <div class="resume-meta">
-          ${count} image${count === 1 ? '' : 's'} ranked &middot; last session ${relativeDate(data.lastSession)}<br>
-          ${progressText}
-        </div>
-        <div class="resume-btns">
-          <button class="btn btn-primary" id="continue-btn">Load folder to continue</button>
-          <button class="btn" id="new-folder-btn">New folder</button>
-        </div>
-        <div class="loading-error" id="loading-error"></div>
-      </div>`;
-  }
+  view.innerHTML = `
+    <div>
+      <div class="drop-zone" id="drop-zone">
+        <div class="icon">📁</div>
+        <p>Drop a folder here, or click to choose one</p>
+        <button class="btn" id="choose-btn">Choose folder</button>
+        <div style="margin-top:10px;font-size:11px;color:#444;">Accepts jpg, jpeg, png, gif, webp</div>
+        ${statusLine}
+      </div>
+      ${resetBtn}
+      <div class="loading-error" id="loading-error"></div>
+    </div>`;
   wireLoadingEvents();
+}
+
+function resetData() {
+  const ok = confirm('Reset all local data? This permanently deletes every score, win/loss record, and flag for every image, across every folder you\'ve rated. This cannot be undone.');
+  if (!ok) return;
+  localStorage.removeItem(STORAGE_KEY);
+  appData = emptyData();
+  loadedFiles = new Map();
+  showLoadingView(appData);
 }
 
 function showLoadingError(msg) {
@@ -256,6 +258,51 @@ function showLoadingError(msg) {
   if (!el) return;
   el.textContent = msg;
   el.style.display = 'block';
+}
+
+// Some images (very large dimensions/file size) fail to decode as a plain
+// <img>. If that happens, retry via createImageBitmap with a resize request,
+// which can succeed where direct decoding doesn't, and cache the downscaled
+// preview so future pairings involving this image don't re-pay the cost.
+async function downscalePreview(name) {
+  const file = loadedFiles.get(name);
+  if (!file) return null;
+  try {
+    const bitmap = await createImageBitmap(file, { resizeWidth: 2000, resizeQuality: 'medium' });
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return await new Promise(resolve => {
+      canvas.toBlob(blob => resolve(blob ? URL.createObjectURL(blob) : null), 'image/jpeg', 0.85);
+    });
+  } catch {
+    return null;
+  }
+}
+
+function setPanelImage(imgId, errorId, name) {
+  const img = document.getElementById(imgId);
+  const errorEl = document.getElementById(errorId);
+  errorEl.style.display = 'none';
+  img.style.display = 'block';
+
+  const showError = () => {
+    img.style.display = 'none';
+    errorEl.textContent = `Couldn't load "${name}" — the file may be too large or corrupted.`;
+    errorEl.style.display = 'flex';
+  };
+
+  img.onerror = async () => {
+    const previewUrl = await downscalePreview(name);
+    if (!previewUrl) { showError(); return; }
+    appData.images[name].url = previewUrl;
+    saveData(appData);
+    img.onerror = showError;
+    img.src = previewUrl;
+  };
+  img.src = appData.images[name].url;
 }
 
 function showRatingView(nameA, nameB) {
@@ -266,8 +313,8 @@ function showRatingView(nameA, nameB) {
   document.getElementById('corner-controls').style.display = 'flex';
   document.getElementById('results-toggle-btn').textContent = 'Results';
 
-  document.getElementById('img-a').src = appData.images[nameA].url;
-  document.getElementById('img-b').src = appData.images[nameB].url;
+  setPanelImage('img-a', 'img-error-a', nameA);
+  setPanelImage('img-b', 'img-error-b', nameB);
   document.getElementById('panel-a').dataset.name = nameA;
   document.getElementById('panel-b').dataset.name = nameB;
   updateStats();
@@ -289,6 +336,9 @@ function makeThumbnail(url) {
   });
 }
 
+const RESULTS_PAGE_SIZE = 50;
+let resultsPage = 0;
+
 function showResultsView() {
   document.getElementById('loading-view').style.display  = 'none';
   document.getElementById('rating-view').style.display   = 'none';
@@ -296,8 +346,26 @@ function showResultsView() {
   document.getElementById('results-view').style.display  = 'flex';
   document.getElementById('results-toggle-btn').textContent = '← Rate';
 
-  const loaded = Object.entries(ratableImages())
+  renderResultsGrid();
+}
+
+function renderResultsGrid() {
+  const sorted = Object.entries(ratableImages())
     .sort((a, b) => b[1].score - a[1].score);
+
+  const total = sorted.length;
+  const pageCount = Math.max(1, Math.ceil(total / RESULTS_PAGE_SIZE));
+  resultsPage = Math.min(Math.max(0, resultsPage), pageCount - 1);
+
+  const start = resultsPage * RESULTS_PAGE_SIZE;
+  const slice = sorted.slice(start, start + RESULTS_PAGE_SIZE);
+
+  document.getElementById('results-page-label').textContent =
+    total === 0 ? '' : `Page ${resultsPage + 1} of ${pageCount} (${total} total)`;
+  document.getElementById('results-prev-btn').disabled = resultsPage === 0;
+  document.getElementById('results-next-btn').disabled = resultsPage >= pageCount - 1;
+  document.getElementById('results-jump-top-btn').disabled = resultsPage === 0;
+  document.getElementById('results-jump-bottom-btn').disabled = resultsPage >= pageCount - 1;
 
   const grid = document.getElementById('results-grid');
   grid.innerHTML = '';
@@ -322,15 +390,29 @@ function showResultsView() {
     }
   }, { rootMargin: '200px' });
 
-  loaded.forEach(([name, img], i) => {
-    const rank = i + 1;
+  slice.forEach(([name, img], i) => {
+    const rank = start + i + 1;
     const cell = document.createElement('div');
     cell.className = 'thumb-cell';
     cell.dataset.name = name;
-    cell.innerHTML = `
-      <img src="" alt="">
-      <div class="thumb-rank${rank <= 3 ? ' top3' : ''}">#${rank}</div>
-      <div class="thumb-score">${Math.round(img.score)}</div>`;
+
+    const thumb = document.createElement('img');
+    thumb.alt = '';
+    const rankEl = document.createElement('div');
+    rankEl.className = 'thumb-rank' + (rank <= 3 ? ' top3' : '');
+    rankEl.textContent = `#${rank}`;
+    const scoreEl = document.createElement('div');
+    scoreEl.className = 'thumb-score';
+    scoreEl.textContent = Math.round(img.score);
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'restore-btn thumb-remove-btn';
+    removeBtn.textContent = 'Remove';
+    removeBtn.onclick = () => {
+      flagImageData(name);
+      renderResultsGrid();
+    };
+    cell.append(thumb, rankEl, scoreEl, removeBtn);
+
     grid.appendChild(cell);
     observer.observe(cell);
   });
@@ -356,13 +438,10 @@ function wireLoadingEvents() {
   const input = document.getElementById('folder-input');
 
   const chooseBtn = document.getElementById('choose-btn');
-  if (chooseBtn) chooseBtn.onclick = () => { pendingNewFolder = false; input.click(); };
+  if (chooseBtn) chooseBtn.onclick = () => input.click();
 
-  const continueBtn = document.getElementById('continue-btn');
-  if (continueBtn) continueBtn.onclick = () => { pendingNewFolder = false; input.click(); };
-
-  const newFolderBtn = document.getElementById('new-folder-btn');
-  if (newFolderBtn) newFolderBtn.onclick = () => { pendingNewFolder = true; input.click(); };
+  const resetBtn = document.getElementById('reset-data-btn');
+  if (resetBtn) resetBtn.onclick = resetData;
 
   const dropZone = document.getElementById('drop-zone');
   if (dropZone) {
@@ -385,8 +464,6 @@ function wireLoadingEvents() {
 }
 
 // --- EVENTS ---
-let pendingNewFolder = false;
-
 function isAcceptedFile(file) {
   return ACCEPTED_EXTS.has(file.name.split('.').pop().toLowerCase());
 }
@@ -403,6 +480,7 @@ async function onFolderLoaded(files) {
 
   for (const file of accepted) {
     appData.images[file.name].url = URL.createObjectURL(file);
+    loadedFiles.set(file.name, file);
   }
 
   const loadedNames = Object.keys(appData.images).filter(n => appData.images[n].url);
@@ -446,10 +524,6 @@ function collectFilesFromEntry(dirEntry) {
 
 document.getElementById('folder-input').addEventListener('change', e => {
   if (!e.target.files.length) return;
-  if (pendingNewFolder) {
-    const ok = confirm('Load new folder? Existing scores for matching filenames will be kept.');
-    if (!ok) { e.target.value = ''; return; }
-  }
   onFolderLoaded(e.target.files);
   e.target.value = '';
 });
@@ -465,9 +539,14 @@ function onPick(winnerName, loserName) {
   startRating();
 }
 
-function flagImage(name) {
+function flagImageData(name) {
   appData.images[name].flagged = true;
   saveData(appData);
+  updateRemovedBadge();
+}
+
+function flagImage(name) {
+  flagImageData(name);
   startRating();
 }
 
@@ -480,29 +559,50 @@ function unflagImage(name) {
   }
 }
 
+const REMOVED_PAGE_SIZE = 50;
+let removedPage = 0;
+
 function showRemovedView() {
   document.getElementById('loading-view').style.display  = 'none';
   document.getElementById('rating-view').style.display   = 'none';
   document.getElementById('results-view').style.display  = 'none';
   document.getElementById('removed-view').style.display  = 'flex';
   document.getElementById('results-toggle-btn').textContent = 'Results';
+  renderRemovedGrid();
+}
 
+function renderRemovedGrid() {
   const entries = flaggedImages().sort((a, b) => a[0].localeCompare(b[0]));
+  const pageCount = Math.max(1, Math.ceil(entries.length / REMOVED_PAGE_SIZE));
+  removedPage = Math.min(removedPage, pageCount - 1);
+
+  const start = removedPage * REMOVED_PAGE_SIZE;
+  const page = entries.slice(start, start + REMOVED_PAGE_SIZE);
+
+  document.getElementById('removed-page-label').textContent =
+    entries.length === 0 ? '' : `Page ${removedPage + 1} of ${pageCount} (${entries.length} removed)`;
+  document.getElementById('removed-prev-btn').disabled = removedPage === 0;
+  document.getElementById('removed-next-btn').disabled = removedPage >= pageCount - 1;
+
   const grid = document.getElementById('removed-grid');
   grid.innerHTML = '';
   document.getElementById('removed-empty').style.display = entries.length === 0 ? 'flex' : 'none';
 
-  entries.forEach(([name, record]) => {
+  page.forEach(([name, record]) => {
     const cell = document.createElement('div');
     cell.className = 'thumb-cell';
     const img = document.createElement('img');
     img.src = record.thumbUrl || record.url;
     img.alt = '';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'thumb-name';
+    nameEl.textContent = name;
+    nameEl.title = name;
     const restoreBtn = document.createElement('button');
     restoreBtn.className = 'restore-btn';
     restoreBtn.textContent = 'Restore';
     restoreBtn.onclick = () => unflagImage(name);
-    cell.append(img, restoreBtn);
+    cell.append(img, nameEl, restoreBtn);
     grid.appendChild(cell);
   });
 }
@@ -533,10 +633,21 @@ document.getElementById('flag-b').addEventListener('click', e => {
 
 document.getElementById('removed-toggle-btn').addEventListener('click', () => {
   if (document.getElementById('removed-view').style.display === 'none') {
+    removedPage = 0;
     showRemovedView();
   } else {
     startRating();
   }
+});
+
+document.getElementById('removed-prev-btn').addEventListener('click', () => {
+  removedPage = Math.max(0, removedPage - 1);
+  renderRemovedGrid();
+});
+
+document.getElementById('removed-next-btn').addEventListener('click', () => {
+  removedPage++;
+  renderRemovedGrid();
 });
 
 document.getElementById('switch-folder-btn').addEventListener('click', () => {
@@ -554,6 +665,7 @@ document.addEventListener('keydown', e => {
 
 document.getElementById('results-toggle-btn').addEventListener('click', () => {
   if (document.getElementById('results-view').style.display === 'none') {
+    resultsPage = 0;
     showResultsView();
   } else {
     showRatingView(
@@ -561,6 +673,26 @@ document.getElementById('results-toggle-btn').addEventListener('click', () => {
       document.getElementById('panel-b').dataset.name
     );
   }
+});
+
+document.getElementById('results-jump-top-btn').addEventListener('click', () => {
+  resultsPage = 0;
+  renderResultsGrid();
+});
+
+document.getElementById('results-jump-bottom-btn').addEventListener('click', () => {
+  resultsPage = Infinity; // clamped to the last page inside renderResultsGrid
+  renderResultsGrid();
+});
+
+document.getElementById('results-prev-btn').addEventListener('click', () => {
+  resultsPage = Math.max(0, resultsPage - 1);
+  renderResultsGrid();
+});
+
+document.getElementById('results-next-btn').addEventListener('click', () => {
+  resultsPage++;
+  renderResultsGrid();
 });
 
 function exportCSV() {
@@ -586,6 +718,7 @@ document.getElementById('export-btn').addEventListener('click', exportCSV);
 let appData = loadData();
 let sessionComparisons = 0;
 let lastPair = null;
+let loadedFiles = new Map(); // filename -> File, for downscale-on-error retries
 showLoadingView(appData);
 </script>
 </body>

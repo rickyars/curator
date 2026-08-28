@@ -92,6 +92,14 @@ function expectedScore(scoreA, scoreB) {
 }
 
 // --- PAIRING ---
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 function weightedRandom(items) {
   const total = items.reduce((sum, x) => sum + x.weight, 0);
   let r = Math.random() * total;
@@ -103,46 +111,35 @@ function weightedRandom(items) {
 }
 
 function selectNextPair(images, lastPair) {
-  const names = Object.keys(images);
+  const allNames = Object.keys(images);
+
+  // Never reoffer either image from the immediately previous pair — a hard
+  // exclusion, not just a bias — whenever the pool is big enough to allow it.
+  const excludeSet = lastPair ? new Set(lastPair) : new Set();
+  const available = allNames.filter(n => !excludeSet.has(n));
+  const names = available.length >= 2 ? available : allNames;
+
   const weights = names.map(n => ({ name: n, weight: 1 / (images[n].games + 1) }));
-  const freshWeights = lastPair && names.length > 3
-    ? weights.filter(w => !lastPair.includes(w.name))
-    : weights;
-  let playerA = weightedRandom(freshWeights.length ? freshWeights : weights);
+  const playerA = weightedRandom(weights);
 
   const pickB = (excludeA) => {
     const others = names.filter(n => n !== excludeA);
-    // Prefer images not shown in the last pair
-    const fresh = lastPair ? others.filter(n => !lastPair.includes(n)) : others;
-    const source = fresh.length >= 1 ? fresh : others;
-    let pool = source.filter(n => images[n].games < LOW_GAME_CAP);
-    if (pool.length === 0) pool = source;
-    pool.sort((a, b) =>
+    let pool = others.filter(n => images[n].games < LOW_GAME_CAP);
+    if (pool.length === 0) pool = others;
+    // Shuffle first: Array.sort is stable, so without this, tied scores
+    // (e.g. everyone at the 1000 starting score) would always resolve in
+    // the same insertion/alphabetical order instead of randomly.
+    shuffle(pool).sort((a, b) =>
       Math.abs(images[a].score - images[excludeA].score) -
       Math.abs(images[b].score - images[excludeA].score)
     );
     return pool;
   };
 
-  let bCandidates = pickB(playerA);
+  const bCandidates = pickB(playerA);
   const topN = bCandidates.slice(0, Math.min(3, bCandidates.length));
-  let playerB = topN[Math.floor(Math.random() * topN.length)];
+  const playerB = topN[Math.floor(Math.random() * topN.length)];
 
-  if (lastPair && names.length > 2) {
-    const [la, lb] = lastPair;
-    const isRepeat = (playerA === la && playerB === lb) ||
-                     (playerA === lb && playerB === la);
-    if (isRepeat) {
-      if (bCandidates.length > 1) {
-        playerB = bCandidates[1];
-      } else {
-        const altWeights = weights.filter(w => w.name !== playerA);
-        playerA = weightedRandom(altWeights);
-        const altTop = pickB(playerA).slice(0, 3);
-        playerB = altTop[Math.floor(Math.random() * altTop.length)];
-      }
-    }
-  }
   return [playerA, playerB];
 }
 
