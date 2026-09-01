@@ -16,9 +16,9 @@
 <!-- Rating view -->
 <div id="rating-view">
   <div class="images-row">
-    <div class="image-panel" id="panel-a"><img id="img-a" src="" alt=""><button class="flag-btn" id="flag-a" title="Remove from tournament">🗑️</button></div>
+    <div class="image-panel" id="panel-a"><img id="img-a" src="" alt=""><button class="star-btn" id="star-a" title="Favorite">☆</button><button class="flag-btn" id="flag-a" title="Remove from tournament">🗑️</button></div>
     <div class="image-divider"></div>
-    <div class="image-panel" id="panel-b"><img id="img-b" src="" alt=""><button class="flag-btn" id="flag-b" title="Remove from tournament">🗑️</button></div>
+    <div class="image-panel" id="panel-b"><img id="img-b" src="" alt=""><button class="star-btn" id="star-b" title="Favorite">☆</button><button class="flag-btn" id="flag-b" title="Remove from tournament">🗑️</button></div>
   </div>
   <div class="stats-bar">
     <span id="stats-session"></span>
@@ -38,25 +38,72 @@
   <div class="results-grid" id="removed-grid"></div>
 </div>
 
+<!-- Favorites view -->
+<div id="favorites-view">
+  <div class="removed-empty" id="favorites-empty" style="display:none;">No favorites yet</div>
+  <div class="results-grid" id="favorites-grid"></div>
+</div>
+
+<!-- Duplicates view -->
+<div id="duplicates-view">
+  <div class="results-toolbar">
+    <button class="btn" id="dup-load-btn">Load Duplicate Report</button>
+    <input type="file" id="dup-report-input" accept=".json,application/json" style="display:none">
+    <button class="btn" id="dup-sort-btn">Sort: Largest first</button>
+    <span id="dup-error" style="color:#c44;"></span>
+  </div>
+  <div class="dup-empty" id="dup-empty" style="display:none;">
+    No duplicate report loaded yet.<br>
+    Run <code>find-near-duplicates.py</code> on <code>images/</code> with <code>--out report.json</code>, then load it here.
+  </div>
+  <div class="dup-clusters" id="dup-clusters"></div>
+</div>
+
 <!-- Fixed corner controls (always visible once a folder is loaded) -->
 <div id="corner-controls" style="display:none;">
   <button class="btn" id="results-toggle-btn">Results</button>
   <button class="btn" id="removed-toggle-btn">Removed</button>
+  <button class="btn" id="favorites-toggle-btn">Favorites</button>
+  <button class="btn" id="duplicates-toggle-btn">Duplicates</button>
   <button class="btn" id="export-btn">Export CSV</button>
 </div>
 
+<!-- Judging banner: shown while a mini-tournament within a duplicate cluster is running -->
+<div id="judging-banner">
+  Judging cluster · <span id="judging-count"></span>
+  <button class="btn btn-primary" id="judging-done-btn">Done</button>
+</div>
 
+<!-- Cluster review: after judging, pick how many of the cluster to keep -->
+<div id="cluster-review">
+  <div class="cluster-review-panel">
+    <h3 id="cluster-review-heading">Keep which of these?</h3>
+    <div class="cluster-review-grid" id="cluster-review-grid"></div>
+    <div class="cluster-review-actions">
+      <button class="btn" id="cluster-review-cancel">Cancel</button>
+      <button class="btn btn-primary" id="cluster-review-confirm">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Lightbox: full-size preview when a results/removed thumbnail is clicked -->
+<div id="lightbox">
+  <button id="lightbox-close" title="Close">&times;</button>
+  <button id="lightbox-prev" class="lightbox-nav-btn" title="Previous (←)">&#8249;</button>
+  <button id="lightbox-next" class="lightbox-nav-btn" title="Next (→)">&#8250;</button>
+  <img id="lightbox-img" src="" alt="">
+  <div id="lightbox-name"></div>
+</div>
+
+
+<script src="pairing.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, get, update, runTransaction, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { getDatabase, ref, get, set, update, runTransaction, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import FIREBASE_CONFIG from './firebase-config.js';
 
-// --- CONFIG ---
-const K_HIGH = 32;
-const K_LOW  = 16;
-const K_THRESHOLD = 10;
-const LOW_GAME_CAP = 15;
-const PROGRESS_THRESHOLD = 5;
+// --- CONFIG --- (K_HIGH, K_LOW, K_THRESHOLD, LOW_GAME_CAP, PROGRESS_THRESHOLD
+// now live in pairing.js, shared with local.html)
 
 // Firebase keys can't contain . / # $ [ ]  — encode/decode for storage
 function toFirebaseKey(name) {
@@ -86,63 +133,6 @@ function imageURL(name) {
   return 'images/' + name.split('/').map(encodeURIComponent).join('/');
 }
 
-// --- ELO ---
-function expectedScore(scoreA, scoreB) {
-  return 1 / (1 + Math.pow(10, (scoreB - scoreA) / 400));
-}
-
-// --- PAIRING ---
-function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
-function weightedRandom(items) {
-  const total = items.reduce((sum, x) => sum + x.weight, 0);
-  let r = Math.random() * total;
-  for (const item of items) {
-    r -= item.weight;
-    if (r <= 0) return item.name;
-  }
-  return items[items.length - 1].name;
-}
-
-function selectNextPair(images, lastPair) {
-  const allNames = Object.keys(images);
-
-  // Never reoffer either image from the immediately previous pair — a hard
-  // exclusion, not just a bias — whenever the pool is big enough to allow it.
-  const excludeSet = lastPair ? new Set(lastPair) : new Set();
-  const available = allNames.filter(n => !excludeSet.has(n));
-  const names = available.length >= 2 ? available : allNames;
-
-  const weights = names.map(n => ({ name: n, weight: 1 / (images[n].games + 1) }));
-  const playerA = weightedRandom(weights);
-
-  const pickB = (excludeA) => {
-    const others = names.filter(n => n !== excludeA);
-    let pool = others.filter(n => images[n].games < LOW_GAME_CAP);
-    if (pool.length === 0) pool = others;
-    // Shuffle first: Array.sort is stable, so without this, tied scores
-    // (e.g. everyone at the 1000 starting score) would always resolve in
-    // the same insertion/alphabetical order instead of randomly.
-    shuffle(pool).sort((a, b) =>
-      Math.abs(images[a].score - images[excludeA].score) -
-      Math.abs(images[b].score - images[excludeA].score)
-    );
-    return pool;
-  };
-
-  const bCandidates = pickB(playerA);
-  const topN = bCandidates.slice(0, Math.min(3, bCandidates.length));
-  const playerB = topN[Math.floor(Math.random() * topN.length)];
-
-  return [playerA, playerB];
-}
-
 // --- UI ---
 function showLoadingStatus(msg) {
   const view = document.getElementById('loading-view');
@@ -162,10 +152,30 @@ function flaggedImages() {
   return Object.entries(localScores).filter(([, v]) => v.flagged);
 }
 
+function favoritedImages() {
+  return Object.entries(localScores).filter(([, v]) => v.favorited);
+}
+
 function showRatingView(nameA, nameB) {
+  // Safety net + diagnostics: this should be structurally impossible (every
+  // pairing path explicitly excludes whichever name it's pairing against),
+  // but it's been reported in the wild — log full context so a repro can be
+  // traced from the browser console, and self-heal instead of showing it.
+  if (nameA === nameB) {
+    console.error('[curator] showRatingView got the same name for both panels:', nameA, {
+      judgingCluster: judgingCluster ? [...judgingCluster] : null,
+      judgingLastPair, lastPair,
+    });
+    console.trace();
+    const pool = judgingCluster ? clusterPool() : ratableImages();
+    const alt = Object.keys(pool).find(n => n !== nameA);
+    if (alt) nameB = alt;
+  }
   document.getElementById('loading-view').style.display  = 'none';
   document.getElementById('results-view').style.display  = 'none';
   document.getElementById('removed-view').style.display  = 'none';
+  document.getElementById('favorites-view').style.display = 'none';
+  document.getElementById('duplicates-view').style.display = 'none';
   document.getElementById('rating-view').style.display   = 'flex';
   document.getElementById('corner-controls').style.display = 'flex';
   document.getElementById('results-toggle-btn').textContent = 'Results';
@@ -174,13 +184,25 @@ function showRatingView(nameA, nameB) {
   document.getElementById('img-b').src = imageURL(nameB);
   document.getElementById('panel-a').dataset.name = nameA;
   document.getElementById('panel-b').dataset.name = nameB;
+  updateStarButton('a', nameA);
+  updateStarButton('b', nameB);
   updateStats();
 }
 
+function updateStarButton(side, name) {
+  const starEl = document.getElementById('star-' + side);
+  const favorited = !!localScores[name]?.favorited;
+  starEl.textContent = favorited ? '★' : '☆';
+  starEl.classList.toggle('favorited', favorited);
+}
+
 function showResultsView() {
+  cancelJudgingIfActive();
   document.getElementById('loading-view').style.display  = 'none';
   document.getElementById('rating-view').style.display   = 'none';
   document.getElementById('removed-view').style.display  = 'none';
+  document.getElementById('favorites-view').style.display = 'none';
+  document.getElementById('duplicates-view').style.display = 'none';
   document.getElementById('results-view').style.display  = 'flex';
   document.getElementById('results-toggle-btn').textContent = '← Rate';
 
@@ -206,6 +228,7 @@ function renderResultsGrid() {
 
   const grid = document.getElementById('results-grid');
   grid.innerHTML = '';
+  const sortedNames = sorted.map(([n]) => n);
   sorted.forEach(([name, record], i) => {
     const rank = i + 1;
     const cell = document.createElement('div');
@@ -213,6 +236,7 @@ function renderResultsGrid() {
     const thumb = document.createElement('img');
     thumb.src = imageURL(name);
     thumb.alt = '';
+    thumb.onclick = () => openLightbox(imageURL(name), name, sortedNames, i);
     const rankEl = document.createElement('div');
     rankEl.className = 'thumb-rank' + (rank <= 3 ? ' top3' : '');
     rankEl.textContent = `#${rank}`;
@@ -233,6 +257,7 @@ function updateStats() {
       ? `${low} image${low === 1 ? '' : 's'} with fewer than ${PROGRESS_THRESHOLD} comparisons`
       : 'Refining rankings';
   updateRemovedBadge();
+  updateFavoritesBadge();
 }
 
 function updateRemovedBadge() {
@@ -240,10 +265,18 @@ function updateRemovedBadge() {
   document.getElementById('removed-toggle-btn').textContent = n > 0 ? `Removed (${n})` : 'Removed';
 }
 
+function updateFavoritesBadge() {
+  const n = favoritedImages().length;
+  document.getElementById('favorites-toggle-btn').textContent = n > 0 ? `Favorites (${n})` : 'Favorites';
+}
+
 function showRemovedView() {
+  cancelJudgingIfActive();
   document.getElementById('loading-view').style.display  = 'none';
   document.getElementById('rating-view').style.display   = 'none';
   document.getElementById('results-view').style.display  = 'none';
+  document.getElementById('favorites-view').style.display = 'none';
+  document.getElementById('duplicates-view').style.display = 'none';
   document.getElementById('removed-view').style.display  = 'flex';
   document.getElementById('results-toggle-btn').textContent = 'Results';
 
@@ -252,17 +285,51 @@ function showRemovedView() {
   grid.innerHTML = '';
   document.getElementById('removed-empty').style.display = entries.length === 0 ? 'flex' : 'none';
 
-  entries.forEach(([name]) => {
+  const entryNames = entries.map(([n]) => n);
+  entries.forEach(([name], i) => {
     const cell = document.createElement('div');
     cell.className = 'thumb-cell';
     const img = document.createElement('img');
     img.src = imageURL(name);
     img.alt = '';
+    img.onclick = () => openLightbox(imageURL(name), name, entryNames, i);
     const restoreBtn = document.createElement('button');
     restoreBtn.className = 'restore-btn';
     restoreBtn.textContent = 'Restore';
     restoreBtn.onclick = () => unflagImage(name);
     cell.append(img, restoreBtn);
+    grid.appendChild(cell);
+  });
+}
+
+function showFavoritesView() {
+  cancelJudgingIfActive();
+  document.getElementById('loading-view').style.display  = 'none';
+  document.getElementById('rating-view').style.display   = 'none';
+  document.getElementById('results-view').style.display  = 'none';
+  document.getElementById('removed-view').style.display  = 'none';
+  document.getElementById('duplicates-view').style.display = 'none';
+  document.getElementById('favorites-view').style.display = 'flex';
+  document.getElementById('results-toggle-btn').textContent = 'Results';
+
+  const entries = favoritedImages().sort((a, b) => a[0].localeCompare(b[0]));
+  const grid = document.getElementById('favorites-grid');
+  grid.innerHTML = '';
+  document.getElementById('favorites-empty').style.display = entries.length === 0 ? 'flex' : 'none';
+
+  const entryNames = entries.map(([n]) => n);
+  entries.forEach(([name], i) => {
+    const cell = document.createElement('div');
+    cell.className = 'thumb-cell';
+    const img = document.createElement('img');
+    img.src = imageURL(name);
+    img.alt = '';
+    img.onclick = () => openLightbox(imageURL(name), name, entryNames, i);
+    const unfavBtn = document.createElement('button');
+    unfavBtn.className = 'restore-btn';
+    unfavBtn.textContent = 'Unfavorite';
+    unfavBtn.onclick = () => unfavoriteImage(name);
+    cell.append(img, unfavBtn);
     grid.appendChild(cell);
   });
 }
@@ -348,12 +415,16 @@ async function onPick(winnerName, loserName) {
   try {
     await applyResultFirebase(winnerName, loserName);
     sessionComparisons++;
-    const pair = nextPair && !nextPair.some(n => localScores[n].flagged)
-      ? nextPair
-      : selectNextPair(ratableImages(), lastPair);
-    lastPair = pair;
-    showRatingView(pair[0], pair[1]);
-    preloadNextPair(pair);
+    if (judgingCluster) {
+      showClusterPair();
+    } else {
+      const pair = nextPair && !nextPair.some(n => localScores[n].flagged)
+        ? nextPair
+        : selectNextPair(ratableImages(), lastPair);
+      lastPair = pair;
+      showRatingView(pair[0], pair[1]);
+      preloadNextPair(pair);
+    }
   } catch (e) {
     showLoadingStatus(`Error saving vote: ${e.message}. Reload to reconnect.`);
   } finally {
@@ -362,6 +433,7 @@ async function onPick(winnerName, loserName) {
 }
 
 function startRating() {
+  cancelJudgingIfActive();
   const pool = ratableImages();
   if (Object.keys(pool).length < 2) {
     showLoadingStatus('Fewer than 2 non-removed images remain. Restore some from Removed.');
@@ -389,14 +461,17 @@ async function setFlag(name, flagged) {
 }
 
 async function flagImage(name) {
+  if (picking) return;
+  picking = true;
   try {
     await setFlag(name, true);
+    updateRemovedBadge();
+    startRating();
   } catch (e) {
     showLoadingStatus(`Error flagging image: ${e.message}`);
-    return;
+  } finally {
+    picking = false;
   }
-  updateRemovedBadge();
-  startRating();
 }
 
 async function unflagImage(name) {
@@ -412,6 +487,425 @@ async function unflagImage(name) {
   }
 }
 
+// --- CLUSTER JUDGING (mini-tournament within one duplicate cluster) ---
+let judgingCluster = null; // array of names currently being judged, or null
+let judgingLastPair = null;
+
+function cancelJudgingIfActive() {
+  if (!judgingCluster) return;
+  judgingCluster = null;
+  document.getElementById('rating-view').classList.remove('judging-mode');
+  document.getElementById('judging-banner').style.display = 'none';
+}
+
+function clusterPool() {
+  const all = ratableImages();
+  return Object.fromEntries(judgingCluster.filter(n => all[n]).map(n => [n, all[n]]));
+}
+
+function startClusterJudging(clusterNames) {
+  const pool = ratableImages();
+  judgingCluster = clusterNames.filter(n => pool[n]);
+  if (judgingCluster.length < 2) {
+    judgingCluster = null;
+    return; // nothing to compare — Keep-only-this / individual Remove still handle this case
+  }
+  judgingLastPair = null;
+  document.getElementById('rating-view').classList.add('judging-mode');
+  document.getElementById('judging-banner').style.display = 'flex';
+  showClusterPair();
+}
+
+function showClusterPair() {
+  const pool = clusterPool();
+  const names = Object.keys(pool);
+  if (names.length < 2) {
+    endClusterJudging();
+    return;
+  }
+  const pair = selectNextPair(pool, judgingLastPair);
+  judgingLastPair = pair;
+  showRatingView(pair[0], pair[1]);
+  document.getElementById('judging-count').textContent =
+    `${names.length} image${names.length === 1 ? '' : 's'} left`;
+}
+
+// Remove one image while judging a cluster — the replacement is drawn from
+// the rest of this cluster only, not the whole pool. Uses setFlag directly
+// (not flagImage) so it doesn't trigger flagImage's own startRating().
+//
+// This awaits a Firebase round-trip, so it shares the `picking` guard with
+// onPick — without it, clicking trash again before the first click's
+// transaction resolves starts a second overlapping call that reads the same
+// stale panel names, and the two calls can race to pick replacements against
+// inconsistent pool state (occasionally landing on the same image twice).
+async function removeFromCluster(removedIsA) {
+  if (picking) return;
+  picking = true;
+  try {
+    const aName = document.getElementById('panel-a').dataset.name;
+    const bName = document.getElementById('panel-b').dataset.name;
+    const removedName = removedIsA ? aName : bName;
+    const keepName = removedIsA ? bName : aName;
+    if (!removedName) return;
+
+    await setFlag(removedName, true);
+    updateRemovedBadge();
+
+    const pool = clusterPool();
+    const candidates = Object.keys(pool).filter(n => n !== keepName);
+
+    if (!pool[keepName] || candidates.length === 0) {
+      endClusterJudging();
+      return;
+    }
+
+    const replacement = pickOneNear(pool, candidates, keepName);
+    const newPair = removedIsA ? [replacement, keepName] : [keepName, replacement];
+    judgingLastPair = newPair;
+    showRatingView(newPair[0], newPair[1]);
+    document.getElementById('judging-count').textContent =
+      `${candidates.length + 1} image${candidates.length === 0 ? '' : 's'} left`;
+  } finally {
+    picking = false;
+  }
+}
+
+function endClusterJudging() {
+  const names = judgingCluster;
+  judgingCluster = null;
+  document.getElementById('rating-view').classList.remove('judging-mode');
+  document.getElementById('judging-banner').style.display = 'none';
+  document.getElementById('rating-view').style.display = 'none';
+  showClusterReview(names);
+}
+
+document.getElementById('judging-done-btn').addEventListener('click', endClusterJudging);
+
+// --- CLUSTER REVIEW (choose how many of the judged cluster to keep) ---
+let clusterReviewNames = [];
+let clusterReviewKeep = new Set();
+
+function showClusterReview(clusterNames) {
+  const names = clusterNames.filter(n => manifestSet.has(n) && !localScores[n]?.flagged);
+  if (names.length === 0) { showDuplicatesView(); return; }
+  names.sort((a, b) => localScores[b].score - localScores[a].score);
+  clusterReviewNames = names;
+  // Default: keep the top scorer, plus any favorited images in the cluster —
+  // a star is a signal you already like that one, so don't make the user
+  // re-confirm it on top of favoriting it.
+  clusterReviewKeep = new Set([names[0], ...names.filter(n => localScores[n].favorited)]);
+  document.getElementById('cluster-review-heading').textContent = names.length === 1
+    ? "Only one image is left in this cluster — there's no second image to compare it against."
+    : 'Keep which of these?';
+  renderClusterReview();
+  document.getElementById('cluster-review').style.display = 'flex';
+}
+
+function renderClusterReview() {
+  const grid = document.getElementById('cluster-review-grid');
+  grid.innerHTML = '';
+  clusterReviewNames.forEach((name, i) => {
+    const record = localScores[name];
+    const kept = clusterReviewKeep.has(name);
+    const cell = document.createElement('div');
+    cell.className = 'cluster-review-cell' + (kept ? ' selected' : '');
+    const img = document.createElement('img');
+    img.alt = '';
+    img.src = imageURL(name);
+    img.onclick = () => openLightbox(imageURL(name), name, clusterReviewNames, i);
+    const rankEl = document.createElement('div');
+    rankEl.className = 'cluster-review-rank';
+    rankEl.textContent = `#${i + 1} · ${Math.round(record.score)}`;
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'cluster-review-toggle';
+    toggleBtn.textContent = kept ? '✓ Keep' : 'Keep';
+    toggleBtn.onclick = () => {
+      // No minimum: if you don't like anything in the cluster, uncheck
+      // them all and every image gets flagged.
+      if (kept) clusterReviewKeep.delete(name);
+      else clusterReviewKeep.add(name);
+      renderClusterReview();
+    };
+    cell.append(img, rankEl, toggleBtn);
+    grid.appendChild(cell);
+  });
+  document.getElementById('cluster-review-confirm').textContent =
+    `Confirm — keep ${clusterReviewKeep.size}, remove ${clusterReviewNames.length - clusterReviewKeep.size}`;
+}
+
+document.getElementById('cluster-review-confirm').addEventListener('click', async () => {
+  for (const name of clusterReviewNames) {
+    if (!clusterReviewKeep.has(name)) await setFlag(name, true);
+  }
+  updateRemovedBadge();
+  document.getElementById('cluster-review').style.display = 'none';
+  showDuplicatesView();
+});
+
+document.getElementById('cluster-review-cancel').addEventListener('click', () => {
+  document.getElementById('cluster-review').style.display = 'none';
+  showDuplicatesView();
+});
+
+// --- DUPLICATES ---
+// The report is shared across everyone in this deployment (stored in
+// Firebase, like scores), not per-browser like local mode's localStorage.
+let duplicateClusters = [];
+let dupSortBySize = true; // largest clusters first, by default
+
+function basename(p) {
+  return p.split(/[\\/]/).pop();
+}
+
+async function loadDuplicateReport(jsonText) {
+  const errorEl = document.getElementById('dup-error');
+  errorEl.textContent = '';
+  let raw;
+  try {
+    raw = JSON.parse(jsonText);
+  } catch (e) {
+    errorEl.textContent = `Couldn't parse report: ${e.message}`;
+    return;
+  }
+  if (!Array.isArray(raw)) {
+    errorEl.textContent = 'Report must be a JSON array of clusters.';
+    return;
+  }
+  // basename() collapses full paths down to filenames (the data model is
+  // keyed by filename), so two different files from different subfolders
+  // that share a name would otherwise appear twice in the same cluster —
+  // dedupe here so no cluster array can ever contain the same name twice.
+  const report = raw
+    .map(group => Array.isArray(group) ? [...new Set(group.map(basename))] : [])
+    .filter(g => g.length > 1);
+  try {
+    await set(ref(db, 'duplicateClusters'), report);
+  } catch (e) {
+    errorEl.textContent = `Couldn't save report: ${e.message}`;
+    return;
+  }
+  duplicateClusters = report;
+  renderDuplicatesView();
+}
+
+// Clusters filtered down to images in the manifest and not already
+// flagged — a cluster with 0 or 1 unresolved members drops out on its own.
+// Dedupe defensively too, in case a report saved before the
+// loadDuplicateReport fix is still sitting in Firebase.
+function activeDuplicateClusters() {
+  return duplicateClusters
+    .map(names => [...new Set(names)].filter(n => manifestSet.has(n) && !localScores[n]?.flagged))
+    .filter(g => g.length > 1);
+}
+
+async function keepOnlyInCluster(clusterNames, keepName) {
+  for (const n of clusterNames) {
+    if (n !== keepName) await setFlag(n, true);
+  }
+  updateRemovedBadge();
+  renderDuplicatesView();
+}
+
+async function removeDupImage(name) {
+  await setFlag(name, true);
+  updateRemovedBadge();
+  renderDuplicatesView();
+}
+
+function showDuplicatesView() {
+  cancelJudgingIfActive();
+  document.getElementById('loading-view').style.display  = 'none';
+  document.getElementById('rating-view').style.display   = 'none';
+  document.getElementById('results-view').style.display  = 'none';
+  document.getElementById('removed-view').style.display  = 'none';
+  document.getElementById('favorites-view').style.display = 'none';
+  document.getElementById('duplicates-view').style.display = 'flex';
+  document.getElementById('results-toggle-btn').textContent = 'Results';
+  renderDuplicatesView();
+}
+
+function renderDuplicatesView() {
+  const clusters = activeDuplicateClusters();
+  if (dupSortBySize) clusters.sort((a, b) => b.length - a.length);
+
+  const container = document.getElementById('dup-clusters');
+  container.innerHTML = '';
+  document.getElementById('dup-empty').style.display =
+    duplicateClusters.length === 0 || clusters.length === 0 ? 'flex' : 'none';
+  if (duplicateClusters.length > 0 && clusters.length === 0) {
+    document.getElementById('dup-empty').innerHTML = 'All duplicate clusters resolved. \u{1F389}';
+  }
+
+  clusters.forEach(clusterNames => {
+    const clusterEl = document.createElement('div');
+    clusterEl.className = 'dup-cluster';
+
+    const labelRow = document.createElement('div');
+    labelRow.className = 'dup-cluster-label-row';
+    const label = document.createElement('div');
+    label.className = 'dup-cluster-label';
+    label.textContent = `${clusterNames.length} similar images`;
+    const judgeBtn = document.createElement('button');
+    judgeBtn.className = 'btn';
+    judgeBtn.textContent = 'Judge this cluster';
+    judgeBtn.onclick = () => startClusterJudging(clusterNames);
+    labelRow.append(label, judgeBtn);
+    clusterEl.appendChild(labelRow);
+
+    const thumbsEl = document.createElement('div');
+    thumbsEl.className = 'dup-thumbs';
+
+    clusterNames.forEach((name, i) => {
+      const cell = document.createElement('div');
+      cell.className = 'dup-thumb-cell';
+
+      const thumb = document.createElement('img');
+      thumb.alt = '';
+      thumb.title = name;
+      thumb.src = imageURL(name);
+      thumb.onclick = () => openLightbox(imageURL(name), name, clusterNames, i);
+
+      const btns = document.createElement('div');
+      btns.className = 'dup-thumb-btns';
+      const keepBtn = document.createElement('button');
+      keepBtn.className = 'dup-keep-btn';
+      keepBtn.textContent = 'Keep only this';
+      keepBtn.onclick = () => keepOnlyInCluster(clusterNames, name);
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'dup-remove-btn';
+      removeBtn.textContent = '🗑️';
+      removeBtn.title = 'Remove this one';
+      removeBtn.onclick = () => removeDupImage(name);
+      btns.append(keepBtn, removeBtn);
+
+      cell.append(thumb, btns);
+      thumbsEl.appendChild(cell);
+    });
+
+    clusterEl.appendChild(thumbsEl);
+    container.appendChild(clusterEl);
+  });
+}
+
+document.getElementById('duplicates-toggle-btn').addEventListener('click', () => {
+  if (document.getElementById('duplicates-view').style.display === 'none') {
+    showDuplicatesView();
+  } else {
+    startRating();
+  }
+});
+
+document.getElementById('dup-load-btn').addEventListener('click', () => {
+  document.getElementById('dup-report-input').click();
+});
+
+document.getElementById('dup-sort-btn').addEventListener('click', () => {
+  dupSortBySize = !dupSortBySize;
+  document.getElementById('dup-sort-btn').textContent = dupSortBySize ? 'Sort: Largest first' : 'Sort: Report order';
+  renderDuplicatesView();
+});
+
+document.getElementById('dup-report-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  file.text().then(loadDuplicateReport);
+});
+
+// --- FAVORITING ---
+// Pure bookmark, orthogonal to flagged/score/rotation — same transaction
+// pattern as setFlag, just a different field.
+async function setFavorite(name, favorited) {
+  const key = ref(db, `images/${toFirebaseKey(name)}`);
+  const result = await runTransaction(key, current => {
+    if (current === null) return current;
+    current.favorited = favorited;
+    return current;
+  });
+  if (result.committed && result.snapshot.val()) {
+    localScores[name] = result.snapshot.val();
+  } else {
+    localScores[name].favorited = favorited; // best-effort local fallback
+  }
+}
+
+async function toggleFavorite(name) {
+  const next = !localScores[name]?.favorited;
+  try {
+    await setFavorite(name, next);
+  } catch (e) {
+    showLoadingStatus(`Error favoriting image: ${e.message}`);
+    return;
+  }
+  updateFavoritesBadge();
+  ['a', 'b'].forEach(side => {
+    if (document.getElementById('panel-' + side).dataset.name === name) {
+      updateStarButton(side, name);
+    }
+  });
+  if (document.getElementById('favorites-view').style.display !== 'none') {
+    showFavoritesView();
+  }
+}
+
+async function unfavoriteImage(name) {
+  try {
+    await setFavorite(name, false);
+  } catch (e) {
+    showLoadingStatus(`Error unfavoriting image: ${e.message}`);
+    return;
+  }
+  updateFavoritesBadge();
+  if (document.getElementById('favorites-view').style.display !== 'none') {
+    showFavoritesView();
+  }
+}
+
+// `list` is the full array of names the clicked thumbnail belongs to (its
+// grid, cluster, etc.) and `index` is its position in it — together they
+// let the lightbox step to the next/previous image in that same set.
+let lightboxList = null;
+let lightboxIndex = -1;
+
+function openLightbox(url, name, list, index) {
+  lightboxList = list && list.length > 1 ? list : null;
+  lightboxIndex = lightboxList ? index : -1;
+  document.getElementById('lightbox-img').src = url;
+  document.getElementById('lightbox-name').textContent = name;
+  document.getElementById('lightbox').style.display = 'flex';
+  document.getElementById('lightbox-prev').style.display = lightboxList ? 'flex' : 'none';
+  document.getElementById('lightbox-next').style.display = lightboxList ? 'flex' : 'none';
+}
+
+function lightboxStep(delta) {
+  if (!lightboxList) return;
+  lightboxIndex = (lightboxIndex + delta + lightboxList.length) % lightboxList.length;
+  const name = lightboxList[lightboxIndex];
+  document.getElementById('lightbox-img').src = imageURL(name);
+  document.getElementById('lightbox-name').textContent = name;
+}
+
+function closeLightbox() {
+  document.getElementById('lightbox').style.display = 'none';
+  document.getElementById('lightbox-img').src = '';
+  lightboxList = null;
+  lightboxIndex = -1;
+}
+
+document.getElementById('lightbox').addEventListener('click', e => {
+  if (e.target.id === 'lightbox') closeLightbox();
+});
+document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
+document.getElementById('lightbox-prev').addEventListener('click', e => { e.stopPropagation(); lightboxStep(-1); });
+document.getElementById('lightbox-next').addEventListener('click', e => { e.stopPropagation(); lightboxStep(1); });
+document.addEventListener('keydown', e => {
+  if (document.getElementById('lightbox').style.display === 'none') return;
+  if (e.key === 'Escape') closeLightbox();
+  if (e.key === 'ArrowLeft') lightboxStep(-1);
+  if (e.key === 'ArrowRight') lightboxStep(1);
+});
+
 document.getElementById('panel-a').addEventListener('click', () => {
   const a = document.getElementById('panel-a').dataset.name;
   const b = document.getElementById('panel-b').dataset.name;
@@ -425,6 +919,7 @@ document.getElementById('panel-b').addEventListener('click', () => {
 });
 
 document.addEventListener('keydown', e => {
+  if (document.getElementById('lightbox').style.display !== 'none') return;
   if (document.getElementById('rating-view').style.display === 'none') return;
   const a = document.getElementById('panel-a').dataset.name;
   const b = document.getElementById('panel-b').dataset.name;
@@ -448,19 +943,44 @@ document.getElementById('results-toggle-btn').addEventListener('click', () => {
 document.getElementById('flag-a').addEventListener('click', e => {
   e.stopPropagation();
   const a = document.getElementById('panel-a').dataset.name;
-  if (a) flagImage(a);
+  if (!a) return;
+  if (judgingCluster) removeFromCluster(true);
+  else flagImage(a);
 });
 
 document.getElementById('flag-b').addEventListener('click', e => {
   e.stopPropagation();
   const b = document.getElementById('panel-b').dataset.name;
-  if (b) flagImage(b);
+  if (!b) return;
+  if (judgingCluster) removeFromCluster(false);
+  else flagImage(b);
+});
+
+document.getElementById('star-a').addEventListener('click', e => {
+  e.stopPropagation();
+  const a = document.getElementById('panel-a').dataset.name;
+  if (a) toggleFavorite(a);
+});
+
+document.getElementById('star-b').addEventListener('click', e => {
+  e.stopPropagation();
+  const b = document.getElementById('panel-b').dataset.name;
+  if (b) toggleFavorite(b);
 });
 
 document.getElementById('removed-toggle-btn').addEventListener('click', () => {
   if (document.getElementById('removed-view').style.display === 'none') {
     if (resultsUnsubscribe) { resultsUnsubscribe(); resultsUnsubscribe = null; }
     showRemovedView();
+  } else {
+    startRating();
+  }
+});
+
+document.getElementById('favorites-toggle-btn').addEventListener('click', () => {
+  if (document.getElementById('favorites-view').style.display === 'none') {
+    if (resultsUnsubscribe) { resultsUnsubscribe(); resultsUnsubscribe = null; }
+    showFavoritesView();
   } else {
     startRating();
   }
@@ -512,7 +1032,7 @@ async function init() {
     if (firebaseImages[name]) {
       localScores[name] = firebaseImages[name];
     } else {
-      const entry = { score: 1000, wins: 0, losses: 0, games: 0, flagged: false };
+      const entry = { score: 1000, wins: 0, losses: 0, games: 0, flagged: false, favorited: false };
       localScores[name] = entry;
       missing[toFirebaseKey(name)] = entry;  // encode key for Firebase
     }
@@ -544,7 +1064,15 @@ async function init() {
     }
   });
 
-  // 6. Begin rating
+  // 6. Load the duplicate-cluster report, if one has been shared to Firebase
+  try {
+    const dupSnap = await get(ref(db, 'duplicateClusters'));
+    duplicateClusters = dupSnap.val() || [];
+  } catch (e) {
+    duplicateClusters = []; // non-fatal — Duplicates view just starts empty
+  }
+
+  // 7. Begin rating
   startRating();
 }
 

@@ -14,9 +14,9 @@
 <!-- Rating view -->
 <div id="rating-view">
   <div class="images-row">
-    <div class="image-panel" id="panel-a"><img id="img-a" src="" alt=""><div class="img-error" id="img-error-a" style="display:none;"></div><button class="flag-btn" id="flag-a" title="Remove from tournament">🗑️</button></div>
+    <div class="image-panel" id="panel-a"><img id="img-a" src="" alt=""><div class="img-error" id="img-error-a" style="display:none;"></div><div class="img-name" id="img-name-a"></div><button class="star-btn" id="star-a" title="Favorite">☆</button><button class="flag-btn" id="flag-a" title="Remove from tournament">🗑️</button></div>
     <div class="image-divider"></div>
-    <div class="image-panel" id="panel-b"><img id="img-b" src="" alt=""><div class="img-error" id="img-error-b" style="display:none;"></div><button class="flag-btn" id="flag-b" title="Remove from tournament">🗑️</button></div>
+    <div class="image-panel" id="panel-b"><img id="img-b" src="" alt=""><div class="img-error" id="img-error-b" style="display:none;"></div><div class="img-name" id="img-name-b"></div><button class="star-btn" id="star-b" title="Favorite">☆</button><button class="flag-btn" id="flag-b" title="Remove from tournament">🗑️</button></div>
   </div>
   <div class="stats-bar">
     <span id="stats-session"></span>
@@ -48,12 +48,70 @@
   <div class="results-grid" id="removed-grid"></div>
 </div>
 
+<!-- Favorites view -->
+<div id="favorites-view">
+  <div class="results-toolbar">
+    <button class="btn" id="favorites-prev-btn">&larr; Prev</button>
+    <span id="favorites-page-label"></span>
+    <button class="btn" id="favorites-next-btn">Next &rarr;</button>
+  </div>
+  <div class="removed-empty" id="favorites-empty" style="display:none;">No favorites yet</div>
+  <div class="results-grid" id="favorites-grid"></div>
+</div>
+
+<!-- Duplicates view -->
+<div id="duplicates-view">
+  <div class="results-toolbar">
+    <button class="btn" id="dup-load-btn">Load Duplicate Report</button>
+    <input type="file" id="dup-report-input" accept=".json,application/json" style="display:none">
+    <button class="btn" id="dup-sort-btn">Sort: Largest first</button>
+    <button class="btn" id="dup-prev-btn">&larr; Prev</button>
+    <span id="dup-page-label"></span>
+    <button class="btn" id="dup-next-btn">Next &rarr;</button>
+    <span id="dup-error" style="color:#c44;"></span>
+  </div>
+  <div class="dup-empty" id="dup-empty" style="display:none;">
+    No duplicate report loaded yet.<br>
+    Run <code>find-near-duplicates.py</code> on your folder with <code>--out report.json</code>, then load it here.
+  </div>
+  <div class="dup-clusters" id="dup-clusters"></div>
+</div>
+
 <!-- Fixed corner controls (always visible once a folder is loaded) -->
 <div id="corner-controls" style="display:none;">
   <button class="btn" id="results-toggle-btn">Results</button>
   <button class="btn" id="removed-toggle-btn">Removed</button>
+  <button class="btn" id="favorites-toggle-btn">Favorites</button>
+  <button class="btn" id="duplicates-toggle-btn">Duplicates</button>
   <button class="btn" id="export-btn">Export CSV</button>
   <button class="btn" id="switch-folder-btn">Switch Folder</button>
+</div>
+
+<!-- Lightbox: full-size preview when a results/removed thumbnail is clicked -->
+<div id="lightbox">
+  <button id="lightbox-close" title="Close">&times;</button>
+  <button id="lightbox-prev" class="lightbox-nav-btn" title="Previous (←)">&#8249;</button>
+  <button id="lightbox-next" class="lightbox-nav-btn" title="Next (→)">&#8250;</button>
+  <img id="lightbox-img" src="" alt="">
+  <div id="lightbox-name"></div>
+</div>
+
+<!-- Judging banner: shown while a mini-tournament within a duplicate cluster is running -->
+<div id="judging-banner">
+  Judging cluster · <span id="judging-count"></span>
+  <button class="btn btn-primary" id="judging-done-btn">Done</button>
+</div>
+
+<!-- Cluster review: after judging, pick how many of the cluster to keep -->
+<div id="cluster-review">
+  <div class="cluster-review-panel">
+    <h3 id="cluster-review-heading">Keep which of these?</h3>
+    <div class="cluster-review-grid" id="cluster-review-grid"></div>
+    <div class="cluster-review-actions">
+      <button class="btn" id="cluster-review-cancel">Cancel</button>
+      <button class="btn btn-primary" id="cluster-review-confirm">Confirm</button>
+    </div>
+  </div>
 </div>
 
 <!-- Storage warning -->
@@ -62,19 +120,15 @@
 <!-- Hidden file input (no accept — webkitdirectory ignores it) -->
 <input type="file" id="folder-input" webkitdirectory multiple style="display:none">
 
+<script src="pairing.js"></script>
 <script>
 // --- CONFIG ---
 const STORAGE_KEY = 'elo-rater-data';
-const K_HIGH = 32;
-const K_LOW = 16;
-const K_THRESHOLD = 10;
-const LOW_GAME_CAP = 15;
-const PROGRESS_THRESHOLD = 5;
 const ACCEPTED_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']);
 
 // --- STORAGE ---
 function emptyData() {
-  return { images: {}, totalComparisons: 0, lastSession: null };
+  return { images: {}, totalComparisons: 0, lastSession: null, duplicateClusters: [] };
 }
 
 function loadData() {
@@ -86,6 +140,7 @@ function loadData() {
       images: parsed.images || {},
       totalComparisons: parsed.totalComparisons || 0,
       lastSession: parsed.lastSession || null,
+      duplicateClusters: parsed.duplicateClusters || [],
     };
   } catch {
     return emptyData();
@@ -97,6 +152,7 @@ function saveData(data) {
     images: data.images,
     totalComparisons: data.totalComparisons,
     lastSession: Date.now(),
+    duplicateClusters: data.duplicateClusters || [],
   };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -108,16 +164,13 @@ function saveData(data) {
 function mergeFolder(data, filenames) {
   for (const name of filenames) {
     if (!data.images[name]) {
-      data.images[name] = { score: 1000, wins: 0, losses: 0, games: 0, flagged: false };
+      data.images[name] = { score: 1000, wins: 0, losses: 0, games: 0, flagged: false, favorited: false };
     }
   }
 }
 
-// --- ELO ---
-function expectedScore(scoreA, scoreB) {
-  return 1 / (1 + Math.pow(10, (scoreB - scoreA) / 400));
-}
-
+// --- ELO --- (expectedScore, shuffle, weightedRandom, pickClosestElo,
+// pickOneNear, selectNextPair now live in pairing.js, shared with index.html)
 function applyResult(winnerName, loserName, data) {
   const winner = data.images[winnerName];
   const loser  = data.images[loserName];
@@ -131,60 +184,6 @@ function applyResult(winnerName, loserName, data) {
   loser.losses++;
   loser.games++;
   data.totalComparisons++;
-}
-
-// --- PAIRING ---
-function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
-function weightedRandom(items) {
-  const total = items.reduce((sum, x) => sum + x.weight, 0);
-  let r = Math.random() * total;
-  for (const item of items) {
-    r -= item.weight;
-    if (r <= 0) return item.name;
-  }
-  return items[items.length - 1].name;
-}
-
-function selectNextPair(images, lastPair) {
-  const allNames = Object.keys(images);
-
-  // Never reoffer either image from the immediately previous pair — a hard
-  // exclusion, not just a bias — whenever the pool is big enough to allow it.
-  const excludeSet = lastPair ? new Set(lastPair) : new Set();
-  const available = allNames.filter(n => !excludeSet.has(n));
-  const names = available.length >= 2 ? available : allNames;
-
-  // Player A: weighted by 1/(games+1) — zero-game images have highest priority
-  const weights = names.map(n => ({ name: n, weight: 1 / (images[n].games + 1) }));
-  const playerA = weightedRandom(weights);
-
-  // Player B: closest Elo among low-game candidates; fall back to all if none qualify
-  const pickB = (excludeA) => {
-    const others = names.filter(n => n !== excludeA);
-    let pool = others.filter(n => images[n].games < LOW_GAME_CAP);
-    if (pool.length === 0) pool = others;
-    // Shuffle first: Array.sort is stable, so without this, tied scores
-    // (e.g. everyone at the 1000 starting score) would always resolve in
-    // the same insertion/alphabetical order instead of randomly.
-    shuffle(pool).sort((a, b) =>
-      Math.abs(images[a].score - images[excludeA].score) -
-      Math.abs(images[b].score - images[excludeA].score)
-    );
-    return pool;
-  };
-
-  const bCandidates = pickB(playerA);
-  const topN = bCandidates.slice(0, Math.min(3, bCandidates.length));
-  const playerB = topN[Math.floor(Math.random() * topN.length)];
-
-  return [playerA, playerB];
 }
 
 // --- UI ---
@@ -212,10 +211,17 @@ function flaggedImages() {
   return Object.entries(loadedImages()).filter(([, v]) => v.flagged);
 }
 
+function favoritedImages() {
+  return Object.entries(loadedImages()).filter(([, v]) => v.favorited);
+}
+
 function showLoadingView(data) {
+  cancelJudgingIfActive();
   document.getElementById('rating-view').style.display   = 'none';
   document.getElementById('results-view').style.display  = 'none';
   document.getElementById('removed-view').style.display  = 'none';
+  document.getElementById('favorites-view').style.display = 'none';
+  document.getElementById('duplicates-view').style.display = 'none';
   document.getElementById('corner-controls').style.display = 'none';
   const view = document.getElementById('loading-view');
   view.style.display = 'flex';
@@ -285,8 +291,16 @@ async function downscalePreview(name) {
 function setPanelImage(imgId, errorId, name) {
   const img = document.getElementById(imgId);
   const errorEl = document.getElementById(errorId);
+  const nameEl = document.getElementById('img-name-' + imgId.split('-').pop());
+  nameEl.textContent = name;
+  nameEl.title = name;
   errorEl.style.display = 'none';
   img.style.display = 'block';
+
+  const starEl = document.getElementById('star-' + imgId.split('-').pop());
+  const favorited = !!appData.images[name].favorited;
+  starEl.textContent = favorited ? '★' : '☆';
+  starEl.classList.toggle('favorited', favorited);
 
   const showError = () => {
     img.style.display = 'none';
@@ -306,9 +320,25 @@ function setPanelImage(imgId, errorId, name) {
 }
 
 function showRatingView(nameA, nameB) {
+  // Safety net + diagnostics: this should be structurally impossible (every
+  // pairing path explicitly excludes whichever name it's pairing against),
+  // but it's been reported in the wild — log full context so a repro can be
+  // traced from the browser console, and self-heal instead of showing it.
+  if (nameA === nameB) {
+    console.error('[curator] showRatingView got the same name for both panels:', nameA, {
+      judgingCluster: judgingCluster ? [...judgingCluster] : null,
+      judgingLastPair, lastPair,
+    });
+    console.trace();
+    const pool = judgingCluster ? clusterPool() : ratableImages();
+    const alt = Object.keys(pool).find(n => n !== nameA);
+    if (alt) nameB = alt;
+  }
   document.getElementById('loading-view').style.display  = 'none';
   document.getElementById('results-view').style.display  = 'none';
   document.getElementById('removed-view').style.display  = 'none';
+  document.getElementById('favorites-view').style.display = 'none';
+  document.getElementById('duplicates-view').style.display = 'none';
   document.getElementById('rating-view').style.display   = 'flex';
   document.getElementById('corner-controls').style.display = 'flex';
   document.getElementById('results-toggle-btn').textContent = 'Results';
@@ -336,13 +366,38 @@ function makeThumbnail(url) {
   });
 }
 
+// A cached thumbUrl is a blob: URL, which dies whenever the page reloads —
+// it's persisted to localStorage alongside everything else, but the browser
+// revokes it as soon as the tab that created it goes away. If a cached one
+// fails to load (broken-image icon), regenerate it from the full-size image
+// instead of leaving it broken.
+function setThumbSrc(img, record) {
+  const regenerate = () => {
+    makeThumbnail(record.url).then(thumbUrl => {
+      if (thumbUrl) {
+        record.thumbUrl = thumbUrl;
+        img.src = thumbUrl;
+      }
+    });
+  };
+  if (record.thumbUrl) {
+    img.onerror = () => { img.onerror = null; regenerate(); };
+    img.src = record.thumbUrl;
+  } else {
+    regenerate();
+  }
+}
+
 const RESULTS_PAGE_SIZE = 50;
 let resultsPage = 0;
 
 function showResultsView() {
+  cancelJudgingIfActive();
   document.getElementById('loading-view').style.display  = 'none';
   document.getElementById('rating-view').style.display   = 'none';
   document.getElementById('removed-view').style.display  = 'none';
+  document.getElementById('favorites-view').style.display = 'none';
+  document.getElementById('duplicates-view').style.display = 'none';
   document.getElementById('results-view').style.display  = 'flex';
   document.getElementById('results-toggle-btn').textContent = '← Rate';
 
@@ -377,19 +432,11 @@ function renderResultsGrid() {
       const cell = entry.target;
       const record = appData.images[cell.dataset.name];
       if (!record?.url) continue;
-      if (record.thumbUrl) {
-        cell.querySelector('img').src = record.thumbUrl;
-      } else {
-        makeThumbnail(record.url).then(thumbUrl => {
-          if (thumbUrl) {
-            record.thumbUrl = thumbUrl;
-            cell.querySelector('img').src = thumbUrl;
-          }
-        });
-      }
+      setThumbSrc(cell.querySelector('img'), record);
     }
   }, { rootMargin: '200px' });
 
+  const sliceNames = slice.map(([n]) => n);
   slice.forEach(([name, img], i) => {
     const rank = start + i + 1;
     const cell = document.createElement('div');
@@ -398,6 +445,7 @@ function renderResultsGrid() {
 
     const thumb = document.createElement('img');
     thumb.alt = '';
+    thumb.onclick = () => openLightbox(img.url, name, sliceNames, i);
     const rankEl = document.createElement('div');
     rankEl.className = 'thumb-rank' + (rank <= 3 ? ' top3' : '');
     rankEl.textContent = `#${rank}`;
@@ -427,11 +475,17 @@ function updateStats() {
       ? `${low} image${low === 1 ? '' : 's'} with fewer than ${PROGRESS_THRESHOLD} comparisons`
       : 'Refining rankings';
   updateRemovedBadge();
+  updateFavoritesBadge();
 }
 
 function updateRemovedBadge() {
   const n = flaggedImages().length;
   document.getElementById('removed-toggle-btn').textContent = n > 0 ? `Removed (${n})` : 'Removed';
+}
+
+function updateFavoritesBadge() {
+  const n = favoritedImages().length;
+  document.getElementById('favorites-toggle-btn').textContent = n > 0 ? `Favorites (${n})` : 'Favorites';
 }
 
 function wireLoadingEvents() {
@@ -494,6 +548,7 @@ async function onFolderLoaded(files) {
 }
 
 function startRating() {
+  cancelJudgingIfActive();
   const pool = ratableImages();
   if (Object.keys(pool).length < 2) {
     showLoadingView(appData);
@@ -536,8 +591,162 @@ function onPick(winnerName, loserName) {
   applyResult(winnerName, loserName, appData);
   sessionComparisons++;
   saveData(appData);
-  startRating();
+  if (judgingCluster) {
+    showClusterPair();
+  } else {
+    startRating();
+  }
 }
+
+// --- CLUSTER JUDGING (mini-tournament within one duplicate cluster) ---
+let judgingCluster = null; // array of names currently being judged, or null
+let judgingLastPair = null;
+
+function cancelJudgingIfActive() {
+  if (!judgingCluster) return;
+  judgingCluster = null;
+  document.getElementById('rating-view').classList.remove('judging-mode');
+  document.getElementById('judging-banner').style.display = 'none';
+}
+
+function clusterPool() {
+  const all = ratableImages();
+  return Object.fromEntries(judgingCluster.filter(n => all[n]).map(n => [n, all[n]]));
+}
+
+function startClusterJudging(clusterNames) {
+  const pool = ratableImages();
+  judgingCluster = clusterNames.filter(n => pool[n]);
+  if (judgingCluster.length < 2) {
+    judgingCluster = null;
+    return; // nothing to compare — Keep-only-this / individual Remove still handle this case
+  }
+  judgingLastPair = null;
+  document.getElementById('rating-view').classList.add('judging-mode');
+  document.getElementById('judging-banner').style.display = 'flex';
+  showClusterPair();
+}
+
+function showClusterPair() {
+  const pool = clusterPool();
+  const names = Object.keys(pool);
+  if (names.length < 2) {
+    endClusterJudging();
+    return;
+  }
+  const pair = selectNextPair(pool, judgingLastPair);
+  judgingLastPair = pair;
+  showRatingView(pair[0], pair[1]);
+  document.getElementById('judging-count').textContent =
+    `${names.length} image${names.length === 1 ? '' : 's'} left`;
+}
+
+// Remove one image while judging a cluster — same idea as removeAndReplace,
+// but the replacement is drawn from the rest of this cluster only, not the
+// whole pool. Flagging here goes straight to Removed, same as everywhere else.
+function removeFromCluster(removedIsA) {
+  const aName = document.getElementById('panel-a').dataset.name;
+  const bName = document.getElementById('panel-b').dataset.name;
+  const removedName = removedIsA ? aName : bName;
+  const keepName = removedIsA ? bName : aName;
+  if (!removedName) return;
+
+  flagImageData(removedName);
+
+  const pool = clusterPool();
+  const candidates = Object.keys(pool).filter(n => n !== keepName);
+
+  if (!pool[keepName] || candidates.length === 0) {
+    // Nothing left in this cluster to compare against — finish up.
+    endClusterJudging();
+    return;
+  }
+
+  const replacement = pickOneNear(pool, candidates, keepName);
+  const newPair = removedIsA ? [replacement, keepName] : [keepName, replacement];
+  judgingLastPair = newPair;
+  showRatingView(newPair[0], newPair[1]);
+  document.getElementById('judging-count').textContent =
+    `${candidates.length + 1} image${candidates.length === 0 ? '' : 's'} left`;
+}
+
+function endClusterJudging() {
+  const names = judgingCluster;
+  judgingCluster = null;
+  document.getElementById('rating-view').classList.remove('judging-mode');
+  document.getElementById('judging-banner').style.display = 'none';
+  // Hide the rating view instead of leaving the last (possibly stale, or
+  // just-removed) pair visible behind the review modal.
+  document.getElementById('rating-view').style.display = 'none';
+  showClusterReview(names);
+}
+
+document.getElementById('judging-done-btn').addEventListener('click', endClusterJudging);
+
+// --- CLUSTER REVIEW (choose how many of the judged cluster to keep) ---
+let clusterReviewNames = [];
+let clusterReviewKeep = new Set();
+
+function showClusterReview(clusterNames) {
+  const names = clusterNames.filter(n => appData.images[n]?.url && !appData.images[n].flagged);
+  if (names.length === 0) { showDuplicatesView(); return; }
+  names.sort((a, b) => appData.images[b].score - appData.images[a].score);
+  clusterReviewNames = names;
+  // Default: keep the top scorer, plus any favorited images in the cluster —
+  // a star is a signal you already like that one, so don't make the user
+  // re-confirm it on top of favoriting it.
+  clusterReviewKeep = new Set([names[0], ...names.filter(n => appData.images[n].favorited)]);
+  document.getElementById('cluster-review-heading').textContent = names.length === 1
+    ? "Only one image is left in this cluster — there's no second image to compare it against."
+    : 'Keep which of these?';
+  renderClusterReview();
+  document.getElementById('cluster-review').style.display = 'flex';
+}
+
+function renderClusterReview() {
+  const grid = document.getElementById('cluster-review-grid');
+  grid.innerHTML = '';
+  clusterReviewNames.forEach((name, i) => {
+    const record = appData.images[name];
+    const kept = clusterReviewKeep.has(name);
+    const cell = document.createElement('div');
+    cell.className = 'cluster-review-cell' + (kept ? ' selected' : '');
+    const img = document.createElement('img');
+    img.alt = '';
+    img.onclick = () => openLightbox(record.url, name, clusterReviewNames, i);
+    setThumbSrc(img, record);
+    const rankEl = document.createElement('div');
+    rankEl.className = 'cluster-review-rank';
+    rankEl.textContent = `#${i + 1} · ${Math.round(record.score)}`;
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'cluster-review-toggle';
+    toggleBtn.textContent = kept ? '✓ Keep' : 'Keep';
+    toggleBtn.onclick = () => {
+      // No minimum: if you don't like anything in the cluster, uncheck
+      // them all and every image gets flagged.
+      if (kept) clusterReviewKeep.delete(name);
+      else clusterReviewKeep.add(name);
+      renderClusterReview();
+    };
+    cell.append(img, rankEl, toggleBtn);
+    grid.appendChild(cell);
+  });
+  document.getElementById('cluster-review-confirm').textContent =
+    `Confirm — keep ${clusterReviewKeep.size}, remove ${clusterReviewNames.length - clusterReviewKeep.size}`;
+}
+
+document.getElementById('cluster-review-confirm').addEventListener('click', () => {
+  for (const name of clusterReviewNames) {
+    if (!clusterReviewKeep.has(name)) flagImageData(name);
+  }
+  document.getElementById('cluster-review').style.display = 'none';
+  showDuplicatesView();
+});
+
+document.getElementById('cluster-review-cancel').addEventListener('click', () => {
+  document.getElementById('cluster-review').style.display = 'none';
+  showDuplicatesView();
+});
 
 function flagImageData(name) {
   appData.images[name].flagged = true;
@@ -545,9 +754,52 @@ function flagImageData(name) {
   updateRemovedBadge();
 }
 
-function flagImage(name) {
-  flagImageData(name);
-  startRating();
+// Favoriting is a pure bookmark — it never touches score, flagged, or
+// rotation. Toggling mid-tournament re-applies the star to whichever panel
+// is currently showing that image, without advancing the pair.
+function toggleFavorite(name) {
+  appData.images[name].favorited = !appData.images[name].favorited;
+  saveData(appData);
+  updateFavoritesBadge();
+  ['a', 'b'].forEach(side => {
+    if (document.getElementById('panel-' + side).dataset.name === name) {
+      const starEl = document.getElementById('star-' + side);
+      const favorited = appData.images[name].favorited;
+      starEl.textContent = favorited ? '★' : '☆';
+      starEl.classList.toggle('favorited', favorited);
+    }
+  });
+  if (document.getElementById('favorites-view').style.display !== 'none') {
+    renderFavoritesGrid();
+  }
+}
+
+// Remove one image from the current pair without advancing the whole pair —
+// only the removed slot gets a fresh replacement, so the surviving image
+// stays put and can also be removed right after if it's no good either.
+function removeAndReplace(removedIsA) {
+  const aName = document.getElementById('panel-a').dataset.name;
+  const bName = document.getElementById('panel-b').dataset.name;
+  const removedName = removedIsA ? aName : bName;
+  const keepName = removedIsA ? bName : aName;
+  if (!removedName) return;
+
+  flagImageData(removedName);
+
+  const pool = ratableImages();
+  const candidates = Object.keys(pool).filter(n => n !== keepName);
+
+  if (!pool[keepName] || candidates.length === 0) {
+    // Surviving image also got flagged/lost, or nothing left to pair it
+    // with — fall back to picking a whole fresh pair.
+    startRating();
+    return;
+  }
+
+  const replacement = pickOneNear(pool, candidates, keepName);
+  const newPair = removedIsA ? [replacement, keepName] : [keepName, replacement];
+  lastPair = newPair;
+  showRatingView(newPair[0], newPair[1]);
 }
 
 function unflagImage(name) {
@@ -563,12 +815,80 @@ const REMOVED_PAGE_SIZE = 50;
 let removedPage = 0;
 
 function showRemovedView() {
+  cancelJudgingIfActive();
   document.getElementById('loading-view').style.display  = 'none';
   document.getElementById('rating-view').style.display   = 'none';
   document.getElementById('results-view').style.display  = 'none';
+  document.getElementById('favorites-view').style.display = 'none';
+  document.getElementById('duplicates-view').style.display = 'none';
   document.getElementById('removed-view').style.display  = 'flex';
   document.getElementById('results-toggle-btn').textContent = 'Results';
   renderRemovedGrid();
+}
+
+const FAVORITES_PAGE_SIZE = 50;
+let favoritesPage = 0;
+
+function showFavoritesView() {
+  cancelJudgingIfActive();
+  document.getElementById('loading-view').style.display  = 'none';
+  document.getElementById('rating-view').style.display   = 'none';
+  document.getElementById('results-view').style.display  = 'none';
+  document.getElementById('removed-view').style.display  = 'none';
+  document.getElementById('duplicates-view').style.display = 'none';
+  document.getElementById('favorites-view').style.display = 'flex';
+  document.getElementById('results-toggle-btn').textContent = 'Results';
+  renderFavoritesGrid();
+}
+
+function renderFavoritesGrid() {
+  const entries = favoritedImages().sort((a, b) => a[0].localeCompare(b[0]));
+  const pageCount = Math.max(1, Math.ceil(entries.length / FAVORITES_PAGE_SIZE));
+  favoritesPage = Math.min(favoritesPage, pageCount - 1);
+
+  const start = favoritesPage * FAVORITES_PAGE_SIZE;
+  const page = entries.slice(start, start + FAVORITES_PAGE_SIZE);
+
+  document.getElementById('favorites-page-label').textContent =
+    entries.length === 0 ? '' : `Page ${favoritesPage + 1} of ${pageCount} (${entries.length} favorited)`;
+  document.getElementById('favorites-prev-btn').disabled = favoritesPage === 0;
+  document.getElementById('favorites-next-btn').disabled = favoritesPage >= pageCount - 1;
+
+  const grid = document.getElementById('favorites-grid');
+  grid.innerHTML = '';
+  document.getElementById('favorites-empty').style.display = entries.length === 0 ? 'flex' : 'none';
+
+  const pageNames = page.map(([n]) => n);
+  page.forEach(([name, record], i) => {
+    const cell = document.createElement('div');
+    cell.className = 'thumb-cell';
+    const img = document.createElement('img');
+    img.alt = '';
+    img.onclick = () => openLightbox(record.url, name, pageNames, i);
+    setThumbSrc(img, record);
+    const nameEl = document.createElement('div');
+    nameEl.className = 'thumb-name';
+    nameEl.textContent = name;
+    nameEl.title = name;
+    const unfavBtn = document.createElement('button');
+    unfavBtn.className = 'restore-btn';
+    unfavBtn.textContent = 'Unfavorite';
+    unfavBtn.onclick = () => toggleFavorite(name);
+    cell.append(img, nameEl, unfavBtn);
+    grid.appendChild(cell);
+  });
+}
+
+function showDuplicatesView() {
+  cancelJudgingIfActive();
+  document.getElementById('loading-view').style.display  = 'none';
+  document.getElementById('rating-view').style.display   = 'none';
+  document.getElementById('results-view').style.display  = 'none';
+  document.getElementById('removed-view').style.display  = 'none';
+  document.getElementById('favorites-view').style.display = 'none';
+  document.getElementById('duplicates-view').style.display = 'flex';
+  document.getElementById('results-toggle-btn').textContent = 'Results';
+  renderDuplicatesView();
 }
 
 function renderRemovedGrid() {
@@ -588,12 +908,14 @@ function renderRemovedGrid() {
   grid.innerHTML = '';
   document.getElementById('removed-empty').style.display = entries.length === 0 ? 'flex' : 'none';
 
-  page.forEach(([name, record]) => {
+  const pageNames = page.map(([n]) => n);
+  page.forEach(([name, record], i) => {
     const cell = document.createElement('div');
     cell.className = 'thumb-cell';
     const img = document.createElement('img');
-    img.src = record.thumbUrl || record.url;
     img.alt = '';
+    img.onclick = () => openLightbox(record.url, name, pageNames, i);
+    setThumbSrc(img, record);
     const nameEl = document.createElement('div');
     nameEl.className = 'thumb-name';
     nameEl.textContent = name;
@@ -606,6 +928,203 @@ function renderRemovedGrid() {
     grid.appendChild(cell);
   });
 }
+
+// --- DUPLICATES ---
+const DUP_PAGE_SIZE = 20; // clusters per page
+let dupPage = 0;
+let dupSortBySize = true; // largest clusters first, by default
+
+function basename(p) {
+  return p.split(/[\\/]/).pop();
+}
+
+function loadDuplicateReport(jsonText) {
+  const errorEl = document.getElementById('dup-error');
+  errorEl.textContent = '';
+  let raw;
+  try {
+    raw = JSON.parse(jsonText);
+  } catch (e) {
+    errorEl.textContent = `Couldn't parse report: ${e.message}`;
+    return;
+  }
+  if (!Array.isArray(raw)) {
+    errorEl.textContent = 'Report must be a JSON array of clusters.';
+    return;
+  }
+  // basename() collapses full paths down to filenames (the data model is
+  // keyed by filename), so two different files from different subfolders
+  // that share a name would otherwise appear twice in the same cluster —
+  // dedupe here so no cluster array can ever contain the same name twice.
+  appData.duplicateClusters = raw
+    .map(group => Array.isArray(group) ? [...new Set(group.map(basename))] : [])
+    .filter(g => g.length > 1);
+  saveData(appData);
+  dupPage = 0;
+  renderDuplicatesView();
+}
+
+// Clusters filtered down to images actually loaded this session and not
+// already flagged — a cluster with 0 or 1 unresolved members needs no
+// further review and drops out on its own as you clean things up. Dedupe
+// defensively too, in case a report saved before the loadDuplicateReport
+// fix is still sitting in localStorage.
+function activeDuplicateClusters() {
+  return appData.duplicateClusters
+    .map(names => [...new Set(names)].filter(n => appData.images[n]?.url && !appData.images[n].flagged))
+    .filter(g => g.length > 1);
+}
+
+function keepOnlyInCluster(clusterNames, keepName) {
+  for (const n of clusterNames) {
+    if (n !== keepName) flagImageData(n);
+  }
+  renderDuplicatesView();
+}
+
+function removeDupImage(name) {
+  flagImageData(name);
+  renderDuplicatesView();
+}
+
+function renderDuplicatesView() {
+  const clusters = activeDuplicateClusters();
+  if (dupSortBySize) clusters.sort((a, b) => b.length - a.length);
+  const total = clusters.length;
+  const pageCount = Math.max(1, Math.ceil(total / DUP_PAGE_SIZE));
+  dupPage = Math.min(Math.max(0, dupPage), pageCount - 1);
+
+  const start = dupPage * DUP_PAGE_SIZE;
+  const page = clusters.slice(start, start + DUP_PAGE_SIZE);
+
+  document.getElementById('dup-page-label').textContent =
+    total === 0 ? '' : `Page ${dupPage + 1} of ${pageCount} (${total} cluster${total === 1 ? '' : 's'})`;
+  document.getElementById('dup-prev-btn').disabled = dupPage === 0;
+  document.getElementById('dup-next-btn').disabled = dupPage >= pageCount - 1;
+
+  const container = document.getElementById('dup-clusters');
+  container.innerHTML = '';
+  document.getElementById('dup-empty').style.display =
+    appData.duplicateClusters.length === 0 || total === 0 ? 'flex' : 'none';
+  if (appData.duplicateClusters.length > 0 && total === 0) {
+    document.getElementById('dup-empty').innerHTML = 'All duplicate clusters resolved. \u{1F389}';
+  }
+
+  // Lazy: only decode/generate a thumbnail once its cell actually scrolls
+  // into view. Generating one means decoding the full-size original file,
+  // which for large source images means real disk I/O — doing that for
+  // every image in every cluster up front is expensive for no reason when
+  // most of them aren't even on screen yet.
+  const observer = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      observer.unobserve(entry.target);
+      const cell = entry.target;
+      const record = appData.images[cell.dataset.name];
+      if (!record?.url) continue;
+      setThumbSrc(cell.querySelector('img'), record);
+    }
+  }, { rootMargin: '200px' });
+
+  page.forEach(clusterNames => {
+    const clusterEl = document.createElement('div');
+    clusterEl.className = 'dup-cluster';
+
+    const labelRow = document.createElement('div');
+    labelRow.className = 'dup-cluster-label-row';
+    const label = document.createElement('div');
+    label.className = 'dup-cluster-label';
+    label.textContent = `${clusterNames.length} similar images`;
+    const judgeBtn = document.createElement('button');
+    judgeBtn.className = 'btn';
+    judgeBtn.textContent = 'Judge this cluster';
+    judgeBtn.onclick = () => startClusterJudging(clusterNames);
+    labelRow.append(label, judgeBtn);
+    clusterEl.appendChild(labelRow);
+
+    const thumbsEl = document.createElement('div');
+    thumbsEl.className = 'dup-thumbs';
+
+    clusterNames.forEach((name, i) => {
+      const record = appData.images[name];
+      const cell = document.createElement('div');
+      cell.className = 'dup-thumb-cell';
+      cell.dataset.name = name;
+
+      const thumb = document.createElement('img');
+      thumb.alt = '';
+      thumb.title = name;
+      thumb.onclick = () => openLightbox(record.url, name, clusterNames, i);
+
+      const btns = document.createElement('div');
+      btns.className = 'dup-thumb-btns';
+      const keepBtn = document.createElement('button');
+      keepBtn.className = 'dup-keep-btn';
+      keepBtn.textContent = 'Keep only this';
+      keepBtn.onclick = () => keepOnlyInCluster(clusterNames, name);
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'dup-remove-btn';
+      removeBtn.textContent = '🗑️';
+      removeBtn.title = 'Remove this one';
+      removeBtn.onclick = () => removeDupImage(name);
+      btns.append(keepBtn, removeBtn);
+
+      cell.append(thumb, btns);
+      thumbsEl.appendChild(cell);
+      observer.observe(cell);
+    });
+
+    clusterEl.appendChild(thumbsEl);
+    container.appendChild(clusterEl);
+  });
+}
+
+// `list` is the full array of names the clicked thumbnail belongs to (its
+// grid page, cluster, etc.) and `index` is its position in it — together
+// they let the lightbox step to the next/previous image in that same set.
+let lightboxList = null;
+let lightboxIndex = -1;
+
+function openLightbox(url, name, list, index) {
+  if (!url) return;
+  lightboxList = list && list.length > 1 ? list : null;
+  lightboxIndex = lightboxList ? index : -1;
+  document.getElementById('lightbox-img').src = url;
+  document.getElementById('lightbox-name').textContent = name;
+  document.getElementById('lightbox').style.display = 'flex';
+  document.getElementById('lightbox-prev').style.display = lightboxList ? 'flex' : 'none';
+  document.getElementById('lightbox-next').style.display = lightboxList ? 'flex' : 'none';
+}
+
+function lightboxStep(delta) {
+  if (!lightboxList) return;
+  lightboxIndex = (lightboxIndex + delta + lightboxList.length) % lightboxList.length;
+  const name = lightboxList[lightboxIndex];
+  const record = appData.images[name];
+  if (!record?.url) return;
+  document.getElementById('lightbox-img').src = record.url;
+  document.getElementById('lightbox-name').textContent = name;
+}
+
+function closeLightbox() {
+  document.getElementById('lightbox').style.display = 'none';
+  document.getElementById('lightbox-img').src = '';
+  lightboxList = null;
+  lightboxIndex = -1;
+}
+
+document.getElementById('lightbox').addEventListener('click', e => {
+  if (e.target.id === 'lightbox') closeLightbox();
+});
+document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
+document.getElementById('lightbox-prev').addEventListener('click', e => { e.stopPropagation(); lightboxStep(-1); });
+document.getElementById('lightbox-next').addEventListener('click', e => { e.stopPropagation(); lightboxStep(1); });
+document.addEventListener('keydown', e => {
+  if (document.getElementById('lightbox').style.display === 'none') return;
+  if (e.key === 'Escape') closeLightbox();
+  if (e.key === 'ArrowLeft') lightboxStep(-1);
+  if (e.key === 'ArrowRight') lightboxStep(1);
+});
 
 document.getElementById('panel-a').addEventListener('click', () => {
   const a = document.getElementById('panel-a').dataset.name;
@@ -621,14 +1140,47 @@ document.getElementById('panel-b').addEventListener('click', () => {
 
 document.getElementById('flag-a').addEventListener('click', e => {
   e.stopPropagation();
-  const a = document.getElementById('panel-a').dataset.name;
-  if (a) flagImage(a);
+  if (!document.getElementById('panel-a').dataset.name) return;
+  if (judgingCluster) removeFromCluster(true);
+  else removeAndReplace(true);
 });
 
 document.getElementById('flag-b').addEventListener('click', e => {
   e.stopPropagation();
-  const b = document.getElementById('panel-b').dataset.name;
-  if (b) flagImage(b);
+  if (!document.getElementById('panel-b').dataset.name) return;
+  if (judgingCluster) removeFromCluster(false);
+  else removeAndReplace(false);
+});
+
+document.getElementById('star-a').addEventListener('click', e => {
+  e.stopPropagation();
+  const name = document.getElementById('panel-a').dataset.name;
+  if (name) toggleFavorite(name);
+});
+
+document.getElementById('star-b').addEventListener('click', e => {
+  e.stopPropagation();
+  const name = document.getElementById('panel-b').dataset.name;
+  if (name) toggleFavorite(name);
+});
+
+document.getElementById('favorites-toggle-btn').addEventListener('click', () => {
+  if (document.getElementById('favorites-view').style.display === 'none') {
+    favoritesPage = 0;
+    showFavoritesView();
+  } else {
+    startRating();
+  }
+});
+
+document.getElementById('favorites-prev-btn').addEventListener('click', () => {
+  favoritesPage = Math.max(0, favoritesPage - 1);
+  renderFavoritesGrid();
+});
+
+document.getElementById('favorites-next-btn').addEventListener('click', () => {
+  favoritesPage++;
+  renderFavoritesGrid();
 });
 
 document.getElementById('removed-toggle-btn').addEventListener('click', () => {
@@ -650,11 +1202,49 @@ document.getElementById('removed-next-btn').addEventListener('click', () => {
   renderRemovedGrid();
 });
 
+document.getElementById('duplicates-toggle-btn').addEventListener('click', () => {
+  if (document.getElementById('duplicates-view').style.display === 'none') {
+    dupPage = 0;
+    showDuplicatesView();
+  } else {
+    startRating();
+  }
+});
+
+document.getElementById('dup-prev-btn').addEventListener('click', () => {
+  dupPage = Math.max(0, dupPage - 1);
+  renderDuplicatesView();
+});
+
+document.getElementById('dup-next-btn').addEventListener('click', () => {
+  dupPage++;
+  renderDuplicatesView();
+});
+
+document.getElementById('dup-load-btn').addEventListener('click', () => {
+  document.getElementById('dup-report-input').click();
+});
+
+document.getElementById('dup-sort-btn').addEventListener('click', () => {
+  dupSortBySize = !dupSortBySize;
+  document.getElementById('dup-sort-btn').textContent = dupSortBySize ? 'Sort: Largest first' : 'Sort: Report order';
+  dupPage = 0;
+  renderDuplicatesView();
+});
+
+document.getElementById('dup-report-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  file.text().then(loadDuplicateReport);
+});
+
 document.getElementById('switch-folder-btn').addEventListener('click', () => {
   showLoadingView(appData);
 });
 
 document.addEventListener('keydown', e => {
+  if (document.getElementById('lightbox').style.display !== 'none') return;
   if (document.getElementById('rating-view').style.display === 'none') return;
   const a = document.getElementById('panel-a').dataset.name;
   const b = document.getElementById('panel-b').dataset.name;

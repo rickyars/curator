@@ -6,8 +6,13 @@
       "$imageKey": {
         ".validate": "newData.hasChildren(['score', 'wins', 'losses', 'games']) && newData.child('score').isNumber() && newData.child('wins').isNumber() && newData.child('wins').val() >= 0 && newData.child('losses').isNumber() && newData.child('losses').val() >= 0 && newData.child('games').isNumber() && newData.child('games').val() >= 0",
         "flagged": { ".validate": "newData.isBoolean()" },
+        "favorited": { ".validate": "newData.isBoolean()" },
         "$other": { ".validate": "$other === 'score' || $other === 'wins' || $other === 'losses' || $other === 'games'" }
       }
+    },
+    "duplicateClusters": {
+      ".read": true,
+      ".write": true
     },
     "totalComparisons": {
       ".read": true,
